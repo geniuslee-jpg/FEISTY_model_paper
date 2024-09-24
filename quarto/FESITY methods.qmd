@@ -118,7 +118,7 @@ p3a <- ggplot(data = my_sims_biomass) +
             size = .7, alpha = .9) +
   scale_color_manual(values = Fishcol, labels = Fishlbl) +
   geom_area(aes(x = id, y = 1/1000 * depth2, alpha = 0), 
-            fill = "burlywood4", alpha = 0.2) +
+            fill = "burlywood4", alpha = 0.4) +
   geom_vline(xintercept = examples, alpha = .7, linetype = "dotted") +
   annotate("text", label = c("c", "d", "e"), x = examples + 2, y = 22, size = 4) +
   annotation_raster(herring, xmin = examples[[2]] + 10, xmax = examples[[2]] + 25, 
