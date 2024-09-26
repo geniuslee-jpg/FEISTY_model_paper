@@ -114,7 +114,8 @@ plotNetwork2 <- function(sim, scale_bio_manual=F, scale_bio = 5) {
   Max_bio <- ifelse(scale_bio_manual, scale_bio, max(Bi, na.rm = T))
   Msize   <- Bi / Max_bio
   Msize[Msize == 0] <- NA
-  Msize <- Msize^(1/3)
+  if(scale_bio_manual==T) Msize <- 1.2*Msize^(1/2)
+  if(scale_bio_manual==F) Msize <- Msize^(1/3)
   Max_size = max(Msize, na.rm = T)
   
   # Create line width: 
@@ -161,7 +162,7 @@ plotNetwork2 <- function(sim, scale_bio_manual=F, scale_bio = 5) {
     scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
                   labels = trans_format("log10", math_format(10^.x))) +
     scale_y_continuous(breaks = seq(0, round(-p$bottom - 1), by = -p$bottom), labels = yaxis) +
-    annotation_logticks(sides = "b",size = 0.2,colour = "darkgrey") +
+    annotation_logticks(sides = "b",linewidth = 0.4,colour = "darkgrey") +
     labs(x ="Weight (g)", y = "", color = "Groups") +
     guides(size = "none",
            color = guide_legend(override.aes = list(size = 5),
