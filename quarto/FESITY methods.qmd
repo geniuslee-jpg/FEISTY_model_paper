@@ -59,7 +59,7 @@ source("Extra_plotting_functions.R")
 
 Run and plot a simple model example:
 
-```{r plot2, fig.width = 8.5, fig.height= 7}
+```{r plot2, fig.width = 9.1, fig.height= 7.5}
 parameters = setupVertical2()
 sim = simulateFEISTY(p = parameters)
 plot(sim)
@@ -143,7 +143,7 @@ p3a <- ggplot(data = my_sims_biomass) +
   theme(axis.title.x = element_blank(),
         axis.text.x = element_blank(),
         axis.ticks.x = element_blank(),
-        axis.title.y = element_text(size = 12),
+        axis.title.y = element_text(size = 11),
         axis.text.y = element_text(size = 8),
         legend.title = element_blank(),
         legend.text = element_text(size = 8),
@@ -183,13 +183,13 @@ p3b <- ggplot(data = df2) +
                     ymax = 46, interpolate = T) +
   
   scale_x_continuous(breaks = examples, labels = xaxis) +
-  ylab(expression(paste("Resources (g ", m^-2," yr)")))  +
+  ylab(expression(paste("Resources (g ", m^-2," ",yr^-1,")")))  +
   theme_base() +
   theme(axis.title.x = element_blank(),
         axis.text.x = element_text(size = 8),
         axis.ticks.x = element_blank(),
         axis.text.y = element_text(size = 8),
-        axis.title.y = element_text(size = 12),
+        axis.title.y = element_text(size = 11),
         legend.title = element_blank(),
         legend.text = element_text(size = 8),
         legend.position = "none",
