@@ -1,5 +1,5 @@
 ---
-title: "FEISTY method figures"
+title: "FEISTY MEE paper figures"
 format: html
 fig-format: pdf
 editor: visual
@@ -8,17 +8,17 @@ date: today
 
 ## Install FEISTY:
 
-Download and install FEISTY package from GitHub. Devtools is required:
+Download and install FEISTY R package from GitHub. The package "remotes" is required:
 
 ```{r}
 #| warning: FALSE
-if (!requireNamespace("devtools", quietly = TRUE)) {
-  install.packages("devtools")
+if (!requireNamespace("remotes", quietly = TRUE)) {
+  install.packages("remotes")
 }
-# Disabled for review. Please install the FEISTY package manually before run.
-# if (!requireNamespace("FEISTY", quietly = TRUE)) {
-# devtools::install_github("...url...")
-# }
+#Please install the FEISTY package manually before run.
+if (!requireNamespace("FEISTY", quietly = TRUE)) {
+  remotes::install_url("https://github.com/Kenhasteandersen/FEISTY/archive/refs/tags/v1.0.0.tar.gz")
+}
 ```
 
 ## Prepare environment:
