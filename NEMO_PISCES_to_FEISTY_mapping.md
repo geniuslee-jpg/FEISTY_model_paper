@@ -20,108 +20,149 @@ FEISTY 글로벌 런(`Global_run_illustration.R`)은 `Input_global.csv` 파일�
 
 ---
 
-## 2. NEMO-PISCES 출력 변수 → FEISTY 입력 매칭
+## 2. NEMO-PISCES 출력 설정 현황 (output_sy/ XML 기반)
 
-### 2-1. 수온 (Tp, Tm, Tb)
+### 2-0. 출력 파일별 사용 가능한 변수
 
-| FEISTY | NEMO 변수 | 파일 | 처리 방법 |
-|--------|----------|------|----------|
-| `Tp` | `votemper` (또는 `thetao`) | grid_T output | 0-100m 깊이의 가중 평균 |
-| `Tm` | `votemper` | grid_T output | 500-1500m 깊이의 가중 평균 |
-| `Tb` | `votemper` | grid_T output | 해저면(최하층) 값 |
+| 출력 파일 | 시간 해상도 | FEISTY에 필요한 변수 |
+|----------|-----------|---------------------|
+| **grid_T** | 5일 평균 | `thetao` (3D 수온), **`sbt`** (해저면 수온) |
+| **ptrc_T** | 월평균 | `NCHL`, `DCHL` (엽록소) |
+| **ptrc_T** | 연평균 | **`ZOO`**, **`ZOO2`** (동물플랑크톤 농도) |
+| **diad_T** | 연평균 | **`Heup`** (유광층 깊이), **`EPC100`** (100m export flux), `GRAZ1`, `GRAZ2` |
 
-- **단위 변환**: 불필요 (NEMO 출력 = °C, FEISTY 입력 = °C)
-- **주의**: zenodo 데이터에는 grid_T 파일이 없음. NEMO를 직접 돌리거나 World Ocean Atlas 2018 사용 필요.
+### 주의: GRAZ1/GRAZ2 vs Closure Term
 
-### 2-2. 해저 수심 (depth)
+- `GRAZ1` = 미소동물플랑크톤이 **먹이를 섭식하는 양** (grazing BY zoo)
+- `GRAZ2` = 중형동물플랑크톤이 **먹이를 섭식하는 양** (grazing BY zoo)
+- FEISTY가 필요한 것 = 동물플랑크톤이 **상위 포식자에게 잡아먹히는 양** (loss OF zoo)
+- → **GRAZ1/GRAZ2는 직접 사용 불가**, closure term(quadratic mortality)으로 계산 필요
 
-| FEISTY | NEMO 소스 | 파일 |
-|--------|----------|------|
-| `depth` | `mbathy`, `bottom_level`, 또는 격자 정보 | `domain_cfg.nc` 또는 `mesh_mask.nc` |
+---
 
-- **단위 변환**: 불필요 (m → m)
-- **대안**: ETOPO 전지구 수심 데이터 사용 가능
+## 3. 변수별 매칭 및 단위 변환 상세
 
-### 2-3. 유광층 깊이 (photic)
+### 3-1. Tp — 표층 수온 (0-100m 평균)
 
-| FEISTY | PISCES 변수 | 파일 |
-|--------|------------|------|
-| `photic` | `heup` (진단 출력 시) | diad_T output |
+| 항목 | 내용 |
+|------|------|
+| NEMO 변수 | `thetao` (grid_T 파일, 5일 평균) |
+| PISCES 단위 | **°C** |
+| FEISTY 단위 | **°C** |
+| 단위 변환 | **불필요** |
+| 처리 방법 | 0-100m 깊이 레벨에 대해 e3t(셀 두께) 가중 평균 |
 
-- **단위 변환**: 불필요 (m → m)
-- **현재 zenodo 데이터에 `heup` 없음**. 대안으로 Chl-a에서 계산:
-
-```
-PISCES 표층 Chl-a: Csur = NCHL[표층] + DCHL[표층]   (mg Chl-a /m³)
-
-Morel & Berthon (1989) 공식:
-  Ctot = 40.6 × Csur^0.459                           (mg Chl-a /m²)
-  z_eu = 568.2 × Ctot^(-0.746)                       (m)
+```python
+# 개념 코드
+Tp = Σ(thetao[z] × e3t[z]) / Σ(e3t[z])   for z where depth ≤ 100m
 ```
 
-### 2-4. 소형 동물플랑크톤 생산율 (szprod)
+### 3-2. Tm — 중층 수온 (500-1500m 평균)
 
-| FEISTY | PISCES 변수 | 파일 |
-|--------|------------|------|
-| `szprod` | `ZOO` (microzooplankton 농도) + `mzrat` (사망률 파라미터) | ptrc_T.nc + namelist_pisces |
+| 항목 | 내용 |
+|------|------|
+| NEMO 변수 | `thetao` (grid_T 파일, 5일 평균) |
+| PISCES 단위 | **°C** |
+| FEISTY 단위 | **°C** |
+| 단위 변환 | **불필요** |
+| 처리 방법 | 500-1500m 깊이 레벨에 대해 e3t 가중 평균 |
 
-**생물학적 의미**: 소형 동물플랑크톤(0.2-2.0mm)이 상위 포식자에게 잡아먹히는 손실량 = FEISTY에서의 최대 생산율(r·Rmax)
+```python
+# 개념 코드
+Tm = Σ(thetao[z] × e3t[z]) / Σ(e3t[z])   for z where 500m ≤ depth ≤ 1500m
+```
 
-**PISCES에서 이 손실량은 quadratic mortality (closure term)로 표현됨:**
+### 3-3. Tb — 저층 수온 (해저면)
 
+| 항목 | 내용 |
+|------|------|
+| NEMO 변수 | **`sbt`** (grid_T 파일, 5일 평균) — 해저면 수온 직접 출력! |
+| PISCES 단위 | **°C** |
+| FEISTY 단위 | **°C** |
+| 단위 변환 | **불필요** |
+| 처리 방법 | **직접 사용** (계산 불필요) |
+
+### 3-4. depth — 해저 수심
+
+| 항목 | 내용 |
+|------|------|
+| NEMO 소스 | `domain_cfg.nc` 또는 `mesh_mask.nc`의 bathymetry |
+| 단위 | **m** |
+| 단위 변환 | **불필요** |
+| 대안 | e3t 수직 합산으로 추정: `depth ≈ Σ(e3t[z])` (해양 격자점에서) |
+
+> `domain_cfg.nc` 파일 위치를 확인해야 함
+
+### 3-5. photic — 유광층 깊이
+
+| 항목 | 내용 |
+|------|------|
+| PISCES 변수 | **`Heup`** (yearly diad_T 파일) |
+| PISCES 단위 | **m** |
+| FEISTY 단위 | **m** |
+| 단위 변환 | **불필요** |
+| 처리 방법 | **직접 사용** (계산 불필요) |
+
+### 3-6. szprod — 소형 동물플랑크톤 최대 생산율
+
+| 항목 | 내용 |
+|------|------|
+| PISCES 변수 | `ZOO` (yearly ptrc_T) + namelist 파라미터 `mzrat` |
+| ZOO 단위 | **mmol C /m³** (field_def_nemo-pisces.xml에서 확인) |
+| FEISTY 단위 | **g WW /m² /yr** |
+
+**생물학적 의미**: 소형 동물플랑크톤이 상위 포식자에게 잡아먹히는 손실량(closure term)
+= FEISTY에서의 최대 생산율(r·Rmax)
+
+**PISCES closure term (quadratic mortality):**
 ```
 closure_ZOO(x,y,z) = mzrat × ZOO(x,y,z)²
 ```
-
-- `mzrat = 0.02 d⁻¹ (mmol C/m³)⁻¹` (namelist_pisces_ref 값)
-- `ZOO` = microzooplankton 농도 (mol C/L in PISCES output)
+- `mzrat = 0.02 d⁻¹ (mmol C/m³)⁻¹` (namelist_pisces_ref)
 
 **단위 변환 과정:**
 
 ```
-Step 1: PISCES 농도 단위 통일
-  ZOO [mol C/L] × 1000 = ZOO [mmol C/m³]
-
-Step 2: Closure term 계산 (각 격자점, 각 깊이)
+Step 1: Closure term 계산 (각 격자점, 각 깊이)
+  ZOO 단위가 이미 mmol C/m³ (PISCES 기본 단위)
   closure = mzrat × ZOO²
   = 0.02 [d⁻¹·(mmol C/m³)⁻¹] × ZOO² [(mmol C/m³)²]
   = [mmol C /m³ /d]
 
-Step 3: 수직 적분 (연직 전체 합산)
-  closure_2D = Σ(closure × dz)    [mmol C /m² /d]
+Step 2: 수직 적분 (연직 전체 합산, e3t = 셀 두께)
+  closure_2D = Σ(closure × e3t)    [mmol C /m² /d]
 
-Step 4: mmol C → g C
+Step 3: mmol C → g C
   × 12/1000 = [g C /m² /d]         (C 원자량 = 12 g/mol)
 
-Step 5: 일 → 년
+Step 4: 일 → 년
   × 365 = [g C /m² /yr]
 
-Step 6: g C → g WW (wet weight)
+Step 5: g C → g WW (wet weight)
   × 9 = [g WW /m² /yr]             (WW:C = 9:1)
 ```
 
 **요약 공식:**
 ```
-szprod = Σ_z(mzrat × ZOO² × dz) × 12/1000 × 365 × 9
-       = Σ_z(0.02 × ZOO² × dz) × 39.42
-```
-(여기서 39.42 = 12/1000 × 365 × 9)
-
-### 2-5. 대형 동물플랑크톤 생산율 (lzprod)
-
-| FEISTY | PISCES 변수 | 파일 |
-|--------|------------|------|
-| `lzprod` | `ZOO2` (mesozooplankton 농도) + `mzrat2` (사망률 파라미터) | ptrc_T.nc + namelist_pisces |
-
-**계산 방식은 szprod와 동일하되, 온도 보정이 추가됨:**
-
-```
-Step 1-6: szprod와 동일한 과정으로 closure term 계산
-  raw_lzprod = Σ_z(mzrat2 × ZOO2² × dz) × 12/1000 × 365 × 9
-             = Σ_z(0.01 × ZOO2² × dz) × 39.42
+szprod = Σ_z(0.02 × ZOO² × e3t) × 12/1000 × 365 × 9
+       = Σ_z(0.02 × ZOO² × e3t) × 39.42
 ```
 
-- `mzrat2 = 0.01 d⁻¹ (mmol C/m³)⁻¹` (namelist_pisces_ref 값)
+### 3-7. lzprod — 대형 동물플랑크톤 최대 생산율
+
+| 항목 | 내용 |
+|------|------|
+| PISCES 변수 | `ZOO2` (yearly ptrc_T) + namelist 파라미터 `mzrat2` |
+| ZOO2 단위 | **mmol C /m³** |
+| FEISTY 단위 | **g WW /m² /yr** |
+
+**계산 방식은 szprod와 동일 + 온도 보정:**
+
+```
+Step 1-5: szprod와 동일
+  raw_lzprod = Σ_z(0.01 × ZOO2² × e3t) × 39.42
+```
+- `mzrat2 = 0.01 d⁻¹ (mmol C/m³)⁻¹` (namelist_pisces_ref)
 
 **추가: 온도 보정 (FEISTY 원논문 방법)**
 
@@ -141,73 +182,74 @@ lzprod = raw_lzprod / ratio(Tp)
 
 중간 온도는 선형 보간(linear interpolation) 적용.
 
-### 2-6. 해저면 Detrital Flux (dfbot)
+### 3-8. dfbot — 해저면 Detrital Flux
 
-| FEISTY | PISCES 변수 | 파일 |
-|--------|------------|------|
-| `dfbot` | `EPC100` (100m 깊이의 export flux) | diad_T.nc |
+| 항목 | 내용 |
+|------|------|
+| PISCES 변수 | `EPC100` (yearly diad_T) |
+| EPC100 단위 | **mol C /m² /s** (field_def에서 확인) |
+| FEISTY 단위 | **g WW /m² /yr** |
 
-- `EPC100` = Export Production of Carbon at 100m (mol C /m² /s)
-
-**직접적인 해저면 flux가 아니므로 감쇄 추정 필요:**
+**100m flux → 해저면 flux 감쇄 추정 (Martin curve):**
 
 ```
-Step 1: 100m flux에서 해저면 flux로 감쇄 (Martin curve)
+Step 1: Martin curve 감쇄
   dfbot_raw = EPC100 × (depth / 100)^(-0.858)    [mol C /m² /s]
 
 Step 2: mol C → g C
-  × 12 = [g C /m² /s]
+  × 12                                            [g C /m² /s]
 
 Step 3: 초 → 년
-  × 86400 × 365 = [g C /m² /yr]
+  × 86400 × 365                                   [g C /m² /yr]
 
 Step 4: g C → g WW
-  × 9 = [g WW /m² /yr]
+  × 9                                             [g WW /m² /yr]
 ```
 
 **요약 공식:**
 ```
 dfbot = EPC100 × (depth/100)^(-0.858) × 12 × 86400 × 365 × 9
-      = EPC100 × (depth/100)^(-0.858) × 3.40e9
+      = EPC100 × (depth/100)^(-0.858) × 3.407×10⁹
 ```
-(여기서 3.40e9 = 12 × 86400 × 365 × 9)
 
-> **주의**: Martin curve 지수(-0.858)는 일반적인 값. 원래 FEISTY 논문은 COBALT에서 직접 해저면 flux를 가져왔으므로 이 감쇄 추정은 근사값임.
-
----
-
-## 3. 전체 요약 표
-
-| # | FEISTY 변수 | FEISTY 단위 | NEMO-PISCES 소스 | PISCES 원래 단위 | 변환 공식 |
-|---|------------|------------|-----------------|-----------------|----------|
-| 1 | `Tp` | °C | `votemper` (0-100m avg) | °C | **변환 불필요** |
-| 2 | `Tm` | °C | `votemper` (500-1500m avg) | °C | **변환 불필요** |
-| 3 | `Tb` | °C | `votemper` (bottom) | °C | **변환 불필요** |
-| 4 | `depth` | m | `domain_cfg` / bathymetry | m | **변환 불필요** |
-| 5 | `photic` | m | `NCHL + DCHL` (표층) | mg Chl-a /m³ | Morel & Berthon 공식 |
-| 6 | `szprod` | g WW/m²/yr | `ZOO` + `mzrat` | mol C/L | `Σ(mzrat×ZOO²×dz) × 39.42` |
-| 7 | `lzprod` | g WW/m²/yr | `ZOO2` + `mzrat2` | mol C/L | `Σ(mzrat2×ZOO2²×dz) × 39.42 / ratio(Tp)` |
-| 8 | `dfbot` | g WW/m²/yr | `EPC100` | mol C/m²/s | `EPC100 × (depth/100)^(-0.858) × 3.40e9` |
+> **주의**: Martin curve 지수(-0.858)는 일반적 값. FEISTY 원논문은 COBALT에서 직접 해저면 flux를 가져왔으므로 이 감쇄 추정은 근사값.
 
 ---
 
-## 4. 현재 zenodo 데이터 가용성
+## 4. 전체 요약 표
 
-| 변수 | zenodo 데이터로 가능? | 비고 |
-|------|---------------------|------|
-| `Tp`, `Tm`, `Tb` | **불가** | grid_T 물리 출력 없음 → WOA 2018 또는 NEMO 재실행 필요 |
-| `depth` | **불가** | domain_cfg 없음 → ETOPO 또는 ORCA2 격자 파일 필요 |
-| `photic` | **가능** | ptrc_T.nc의 `NCHL + DCHL` 표층값으로 계산 |
-| `szprod` | **가능** | ptrc_T.nc의 `ZOO` + namelist `mzrat=0.02` |
-| `lzprod` | **가능** | ptrc_T.nc의 `ZOO2` + namelist `mzrat2=0.01` (+ Tp 보정 필요) |
-| `dfbot` | **가능** | diad_T.nc의 `EPC100` + depth 필요 (Martin curve 감쇄) |
+| # | FEISTY 변수 | FEISTY 단위 | NEMO-PISCES 변수 | PISCES 단위 | 변환 공식 | 난이도 |
+|---|------------|------------|-----------------|------------|----------|--------|
+| 1 | `Tp` | °C | `thetao` (0-100m 가중평균) | °C | **변환 불필요** | 쉬움 |
+| 2 | `Tm` | °C | `thetao` (500-1500m 가중평균) | °C | **변환 불필요** | 쉬움 |
+| 3 | `Tb` | °C | **`sbt`** (직접 사용) | °C | **변환 불필요** | 쉬움 |
+| 4 | `depth` | m | `domain_cfg` / `e3t` 합산 | m | **변환 불필요** | 쉬움 |
+| 5 | `photic` | m | **`Heup`** (직접 사용) | m | **변환 불필요** | 쉬움 |
+| 6 | `szprod` | g WW/m²/yr | `ZOO` + `mzrat=0.02` | mmol C/m³ | `Σ(0.02×ZOO²×e3t) × 39.42` | 중간 |
+| 7 | `lzprod` | g WW/m²/yr | `ZOO2` + `mzrat2=0.01` | mmol C/m³ | `Σ(0.01×ZOO2²×e3t) × 39.42 / ratio(Tp)` | 중간 |
+| 8 | `dfbot` | g WW/m²/yr | `EPC100` + `depth` | mol C/m²/s | `EPC100 × (depth/100)^(-0.858) × 3.407e9` | 중간 |
+
+> 단위 변환 상수: `39.42 = 12/1000 × 365 × 9` , `3.407e9 = 12 × 86400 × 365 × 9`
 
 ---
 
-## 5. 참고 문헌
+## 5. 아직 확인 필요한 사항
+
+| 항목 | 상태 | 필요한 조치 |
+|------|------|-----------|
+| `domain_cfg.nc` 파일 위치 | **미확인** | 서버에서 find 명령어로 확인 필요 |
+| grid_T 실제 출력 nc 파일 | **미확인** | 본인 NEMO 실행 결과 파일 위치 확인 필요 |
+| `mzrat`, `mzrat2` 실제 사용값 | namelist_ref 값 확인 완료 | namelist_cfg에서 오버라이드 여부 확인 필요 |
+
+---
+
+## 6. 참고 문헌
 
 - FEISTY input sources: `quarto/data/Input_global_sources.txt`
 - PISCES-v2: Aumont et al. (2015), *Geosci. Model Dev.*, 8, 2465-2513
 - Martin curve: Martin et al. (1987), *Deep-Sea Research*, 34(2), 267-285
 - Morel & Berthon (1989), *Limnology and Oceanography*, 34(8), 1545-1562
 - WOA 2018: Locarnini et al. (2018), NOAA Atlas NESDIS 81
+- NEMO output XML: `/data01/labdisk/sungjin/NEMO_output/output_sy/file_def_nemo-oce.xml`
+- PISCES output XML: `/data01/labdisk/sungjin/NEMO_output/output_sy/file_def_nemo-pisces.xml`
+- PISCES field definitions: `/data01/labdisk/sungjin/NEMO_output/output_sy/field_def_nemo-pisces.xml`
