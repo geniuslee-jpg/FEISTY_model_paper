@@ -3,16 +3,36 @@
 <!--
 ============================================================================================================
 =                                           output files definition                                        =
-=                                            Define your own filesfor ocean dynamics context               =
+=                                            Define your own files for ocean dynamics context               =
 =                                         put the variables you want...                                    =
 ============================================================================================================
+
+  FEISTY fish model input: NEMO-OCE variable mapping (verified 2026-02-08)
+  ========================================================================
+  References:
+    [1] Petrik et al. (2019) Prog. Oceanogr. 176:102124   doi:10.1016/j.pocean.2019.102124
+    [2] van Denderen et al. (2021) Glob. Ecol. Biogeogr. 30:1822-1834  doi:10.1111/geb.13348
+    [3] Zhao et al. (2025) Methods Ecol. Evol. 16:40-48   doi:10.1111/2041-210X.14465
+    [4] Madec et al. (2019) NEMO ocean engine. doi:10.5281/zenodo.1464816
+
+  FEISTY variable   NEMO field    grid_ref     unit  output   post-processing
+  ===============   ==========    ========     ====  ======   ===============
+  Tp (0-100m avg)   toce + e3t    grid_T_3D    degC  5d       sum(thetao*e3t)/sum(e3t), 0-100m [1][3]
+  Tm (500-1500m)    toce + e3t    grid_T_3D    degC  5d       sum(thetao*e3t)/sum(e3t), 500-1500m [3]
+  Tb (bottom T)     sbt           grid_T_2D    degC  5d       direct use [1]
+  depth             bathy         grid_T_2D    m     once     direct use [1]
+
+  NOTE: Tp is 0-100m depth-weighted average, NOT SST (Petrik et al. 2019, FEISTY R pkg setupVertical2).
+  NOTE: Tm is 500-1500m average (FEISTY R pkg setupVertical2), NOT 200-1000m.
     -->
 
     <file_definition type="one_file" name="@expname@_@freq@_@startdate@_@enddate@" sync_freq="1mo" min_digits="4">
 
       <file_group id="oce_5d" output_freq="5d"  output_level="10" enabled=".TRUE.">  <!-- 5d files -->
         <file id="file1" name_suffix="_grid_T" description="ocean T grid variables" >
+          <!-- FEISTY: e3t (cell thickness) needed for depth-weighted avg of Tp and Tm -->
           <field field_ref="e3t"      />
+          <!-- FEISTY: toce (3D ocean temperature) -> Tp (0-100m avg), Tm (500-1500m avg) [1][2] -->
           <field field_ref="toce"         name="thetao"                                                                      operation="instant" freq_op="5d" > @toce_e3t / @e3t </field>
           <field field_ref="soce"         name="so"                                                                          operation="instant" freq_op="5d" > @soce_e3t / @e3t </field>
           <field field_ref="sst"          name="tos"   />
@@ -24,6 +44,7 @@
           <field field_ref="mldkz5"   />
           <field field_ref="mldr10_1" />
           <field field_ref="mldr10_1"     name="mldr10_1dcy"  long_name="amplitude of mldr10_1 diurnal cycle"                operation="average" freq_op="1d" > @mldr10_1max - @mldr10_1min </field>
+          <!-- FEISTY: sbt -> Tb (sea bottom temperature), direct use [1] -->
           <field field_ref="sbt"      />
           <field field_ref="heatc"        name="heatc" />
           <field field_ref="saltc"        name="saltc" />
@@ -144,6 +165,11 @@
 
         <!-- ====================================================================== -->
         <!-- FEISTY input: static ocean fields (output once)                        -->
+        <!--   bathy     : seafloor depth (m), grid_T_2D  -> FEISTY 'depth' [1]    -->
+        <!--   areacello : grid cell area (m2), grid_T_2D  -> for area-weighting    -->
+        <!--   Also used for Martin curve: dfbot = EPC100*(depth/100)^(-0.858) [5]  -->
+        <!--   [5] Martin et al. (1987) Deep-Sea Res. 34:267-285                    -->
+        <!--       doi:10.1016/0198-0149(87)90086-0                                 -->
         <!-- ====================================================================== -->
         <file id="file21" name_suffix="_grid_T_static" description="ocean static variables" >
           <field field_ref="bathy"      name="depth"      operation="once"  long_name="Sea floor depth below geoid"  />

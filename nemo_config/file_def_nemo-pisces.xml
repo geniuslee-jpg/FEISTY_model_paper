@@ -3,9 +3,40 @@
 <!--
 ============================================================================================================
 =                                           output files definition                                        =
-=                                            Define your own filesfor ocean dynamics context               =
+=                                            Define your own files for ocean dynamics context               =
 =                                         put the variables you want...                                    =
 ============================================================================================================
+
+  FEISTY fish model input: NEMO-PISCES variable mapping (verified 2026-02-08)
+  ===========================================================================
+  References:
+    [1] Petrik et al. (2019) Prog. Oceanogr. 176:102124      doi:10.1016/j.pocean.2019.102124
+    [2] van Denderen et al. (2021) Glob. Ecol. Biogeogr. 30:1822-1834  doi:10.1111/geb.13348
+    [3] Zhao et al. (2025) Methods Ecol. Evol. 16:40-48      doi:10.1111/2041-210X.14465
+    [4] Aumont et al. (2015) Geosci. Model Dev. 8:2465-2513  doi:10.5194/gmd-8-2465-2015
+    [5] Martin et al. (1987) Deep-Sea Res. 34:267-285        doi:10.1016/0198-0149(87)90086-0
+    [6] Pauly & Christensen (1995) Nature 374:255-257         doi:10.1038/374255a0
+    [7] Stock et al. (2014) Prog. Oceanogr. 120:1-28         doi:10.1016/j.pocean.2013.07.001
+    [8] Stock et al. (2017) PNAS 114:E1441-E1449             doi:10.1073/pnas.1610238114
+
+  FEISTY variable   NEMO field   grid_ref          unit         output  post-processing
+  ===============   ==========   ========          ====         ======  ===============
+  photic            Heup         grid_T_2D_inner   m            1mo     direct use [1]
+  dfbot             EPC100       grid_T_2D_inner   mol C/m2/s   1mo     Martin curve + unit conv [5][6]
+  szprod            GRAZ1        grid_T_3D_inner   mol C/m3/s   1mo     vert. integration + unit conv [1][7]
+  lzprod            GRAZ2        grid_T_3D_inner   mol C/m3/s   1mo     vert. integration + unit conv [1][7]
+
+  Post-processing conversion (NEMO -> FEISTY):
+    dfbot  = EPC100 * (depth/100)^(-0.858) * 12.011 * 86400 * 365 * 9  [mol C/m2/s -> g WW/m2/yr]
+    szprod = integral(GRAZ1 * e3t, dz) * 12.011 * 86400 * 365 * 9      [mol C/m3/s -> g WW/m2/yr]
+    lzprod = integral(GRAZ2 * e3t, dz) * 12.011 * 86400 * 365 * 9      [mol C/m3/s -> g WW/m2/yr]
+      where: 12.011 = molar mass C (g/mol), 86400*365 = s/yr, 9 = WW:C ratio [6]
+
+  NOTE on szprod/lzprod proxy:
+    Original FEISTY uses COBALT "closure term" (zooplankton loss to higher predators) [7][8].
+    PISCES GRAZ1/GRAZ2 (total grazing rate) is a closer proxy than ZOO/ZOO2 (biomass),
+    because it represents energy flux rather than standing stock [4].
+    ZOO/ZOO2 biomass is also available in yearly output (file221) for comparison.
     -->
 
     <file_definition type="one_file" name="@expname@_@freq@_@startdate@_@enddate@" sync_freq="1mo" min_digits="4">
@@ -48,10 +79,15 @@
           <field field_ref="Dpco2"    />
           <!-- ====================================================================== -->
           <!-- FEISTY input: monthly diagnostics for fish model forcing               -->
-          <!--   Heup   : euphotic layer depth           -> FEISTY 'photic'           -->
-          <!--   EPC100 : POC export flux at 100m        -> FEISTY 'dfbot' (+ Martin) -->
-          <!--   GRAZ1  : micro-zooplankton grazing rate -> FEISTY 'szprod'           -->
-          <!--   GRAZ2  : meso-zooplankton grazing rate  -> FEISTY 'lzprod'           -->
+          <!-- Verified against field_def_nemo-pisces.xml (EXP00, 2026-02-08)         -->
+          <!--                                                                         -->
+          <!--   Heup   : grid_T_2D_inner, m          -> FEISTY 'photic'       [1]    -->
+          <!--   EPC100 : grid_T_2D_inner, mol/m2/s   -> FEISTY 'dfbot'        [1][5] -->
+          <!--   GRAZ1  : grid_T_3D_inner, mol/m3/s   -> FEISTY 'szprod'       [1][7] -->
+          <!--   GRAZ2  : grid_T_3D_inner, mol/m3/s   -> FEISTY 'lzprod'       [1][7] -->
+          <!--                                                                         -->
+          <!-- GRAZ1/GRAZ2 are 3D fields: require vertical integration in              -->
+          <!-- post-processing. ZOO/ZOO2 biomass also in yearly output (file221).      -->
           <!-- ====================================================================== -->
           <field field_ref="Heup"     name="Heup"     long_name="Euphotic layer depth"                          />
           <field field_ref="EPC100"   name="EPC100"   long_name="Export of POC at 100m"                         />
