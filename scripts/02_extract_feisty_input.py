@@ -32,7 +32,7 @@ import pandas as pd
 # CONFIG
 # ============================================================================
 
-DATA_DIR = sys.argv[1] if len(sys.argv) > 1 else "/data01/labdisk/sungjin/NEMO-FEISTY/subset"
+DATA_DIR = sys.argv[1] if len(sys.argv) > 1 else "/data01/labdisk/sungjin/NEMO-FEISTY/02.subset"
 
 # 출력 경로
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
