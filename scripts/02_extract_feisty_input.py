@@ -33,22 +33,18 @@ import pandas as pd
 # CONFIG
 # ============================================================================
 
-DATA_DIR = sys.argv[1] if len(sys.argv) > 1 else "/data01/labdisk/sungjin/NEMO-FEISTY"
+DATA_DIR = sys.argv[1] if len(sys.argv) > 1 else "/data01/labdisk/sungjin/NEMO-FEISTY/subset"
 
-# 시간 범위 (model year). 연평균 파일은 10 timesteps = 10년
-YEAR_START = 1
-YEAR_END = 10
-
-# 출력 경로 (스크립트 위치 기준 또는 DATA_DIR 기준)
+# 출력 경로
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "..", "quarto", "data")
 OUTPUT_FILE = "Input_NEMO_FEISTY.csv"
 
-# 파일명
-FILE_GRID_T  = "ORCA2_5d_00010101_00501231_grid_T.nc"
-FILE_STATIC  = "ORCA2_1y_00010101_00501231_grid_T_static.nc"
-FILE_DIAD_1Y = "ORCA2_1y_00010101_00501231_diad_T.nc"
-FILE_DIAD_1M = "ORCA2_1m_00010101_00501231_diad_T.nc"
+# 파일명 - CDO 전처리 후 subset 파일 (00_preprocess_cdo.sh로 생성)
+FILE_GRID_T  = "grid_T_10yr.nc"           # thetao, sbt (5d, 730 steps)
+FILE_STATIC  = "static_depth.nc"           # depth
+FILE_DIAD_1Y = "diad_T_1y_10yr.nc"        # Heup, EPC100, GRAZ1, GRAZ2 (1y, 10 steps)
+FILE_DIAD_1M = "diad_T_1m_10yr.nc"        # 같은 변수 월별 (1m, 120 steps)
 
 # 단위 변환 상수 (noleap calendar)
 SEC_PER_YEAR = 365 * 86400  # 31,536,000 s
@@ -70,7 +66,7 @@ def main():
     print("=" * 70)
     print("NEMO-PISCES → FEISTY Input 변환")
     print(f"데이터: {DATA_DIR}")
-    print(f"기간: Year {YEAR_START}-{YEAR_END}")
+    print(f"(CDO 전처리된 subset 파일 사용)")
     print("=" * 70)
 
     # ==================================================================
@@ -102,12 +98,11 @@ def main():
     deptht = ds_grid['deptht'].values
     print(f"  깊이 레벨 ({len(deptht)}): {np.round(deptht, 1)}")
 
-    # 시간 범위: noleap, 5d → 73 steps/yr
+    # CDO 전처리 후 이미 10년만 포함 → 전체 사용
     n_time = len(ds_grid['time_counter'])
-    steps_per_year = 73
-    t_start = (YEAR_START - 1) * steps_per_year
-    t_end = min(YEAR_END * steps_per_year, n_time)
-    print(f"  시간: {t_start}-{t_end-1} ({t_end-t_start} steps, {n_time} total)")
+    t_start = 0
+    t_end = n_time
+    print(f"  시간: {n_time} steps (전체 사용, CDO로 이미 10년 추출됨)")
 
     # --- Tb: sbt (sea bottom temperature) - 2D, 바로 사용 ---
     print("  Tb (sbt)...")
@@ -124,10 +119,18 @@ def main():
 
     thetao = ds_grid['thetao'].isel(time_counter=slice(t_start, t_end))
 
-    # e3t (cell thickness)로 가중 평균하면 더 정확하지만,
-    # deptht_bounds에서 두께 계산
-    dz = ds_grid['deptht_bounds'].values  # (31, 2)
-    layer_thickness = dz[:, 1] - dz[:, 0]  # 각 레벨 두께 (m)
+    # 레벨 두께 계산 (deptht_bounds 있으면 사용, 없으면 중간점 방식)
+    if 'deptht_bounds' in ds_grid:
+        dz = ds_grid['deptht_bounds'].values  # (31, 2)
+        layer_thickness = dz[:, 1] - dz[:, 0]
+    else:
+        # 중간점 방식: 각 레벨의 두께 = 인접 레벨 중간점 간 거리
+        layer_thickness = np.zeros(len(deptht))
+        layer_thickness[0] = (deptht[0] + deptht[1]) / 2.0
+        for k in range(1, len(deptht) - 1):
+            layer_thickness[k] = (deptht[k+1] - deptht[k-1]) / 2.0
+        layer_thickness[-1] = layer_thickness[-2]  # 마지막 레벨
+        print("    (deptht_bounds 없음 → 중간점 방식으로 두께 계산)")
     print(f"    layer thickness (0-100m): {np.round(layer_thickness[idx_tp], 1)}")
 
     # 가중 평균: Tp = Σ(T_k × dz_k) / Σ(dz_k) for k in 0-100m
@@ -168,10 +171,8 @@ def main():
                               decode_times=False)
 
     n_yr = len(ds_diad['time_counter'])
-    yr_start = YEAR_START - 1
-    yr_end = min(YEAR_END, n_yr)
-    print(f"  연평균 시간: index {yr_start}-{yr_end-1} ({yr_end-yr_start}/{n_yr} years)")
-    ds_diad_sel = ds_diad.isel(time_counter=slice(yr_start, yr_end))
+    print(f"  연평균: {n_yr} years (전체 사용, CDO로 이미 10년 추출됨)")
+    ds_diad_sel = ds_diad  # 전체 사용
 
     # --- Heup: 유광층 깊이 (m) ---
     print("  photic (Heup)...")
@@ -325,7 +326,7 @@ def main():
             ax.text(0.5, 0.5, 'No reference\nInput_global.csv', ha='center',
                     va='center', transform=ax.transAxes)
 
-        fig.suptitle(f'NEMO-PISCES → FEISTY Input (Year {YEAR_START}-{YEAR_END} mean)',
+        fig.suptitle('NEMO-PISCES → FEISTY Input (10-year mean)',
                      fontsize=14, fontweight='bold')
 
         fig_path = os.path.join(OUTPUT_DIR, "Input_NEMO_FEISTY_check.png")
