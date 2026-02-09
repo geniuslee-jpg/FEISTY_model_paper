@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 NEMO-PISCES → FEISTY Input CSV 변환
-디버깅 출력 포함 버전
+domcfg 기반 bathymetry + tmask + e3t_0 사용
 """
 
 import os
@@ -19,6 +19,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 grid_file = f"{SUBSET_DIR}/grid_T_10yr.nc"
 diad_file = f"{SUBSET_DIR}/diad_T_1m_10yr.nc"
+domcfg_file = "/data01/labdisk/semin/work/model/nemo_5.0.1/cfgs/exp_50yrs/EXP00/ORCA_R2_zps_domcfg.nc"
 
 # 단위 변환: mol C/m2/s → g wet weight/m2/yr
 # = sec_per_yr(365*86400) × g_per_mol(12) × ww_per_C(9)
@@ -28,213 +29,214 @@ CONV = 365 * 86400 * 12.0 * 9.0  # = 3,405,888,000
 MARTIN_B = 0.858
 
 print("=" * 60)
-print("NEMO-PISCES → FEISTY Input")
-print(f"grid: {grid_file}")
-print(f"diad: {diad_file}")
+print("NEMO-PISCES → FEISTY Input (domcfg version)")
+print(f"grid:   {grid_file}")
+print(f"diad:   {diad_file}")
+print(f"domcfg: {domcfg_file}")
 print("=" * 60)
 
 # =============================================================
-# 파일 로드
+# [0] 파일 로드
 # =============================================================
 print("\n[0] 파일 로드...")
 ds_grid = xr.open_dataset(grid_file, decode_times=False)
 ds_diad = xr.open_dataset(diad_file, decode_times=False)
+ds_dom = xr.open_dataset(domcfg_file)
 
 # 시간 차원 자동 감지
 time_dim_grid = [d for d in ds_grid["thetao"].dims if "time" in d][0]
 time_dim_diad = [d for d in ds_diad["Heup"].dims if "time" in d][0]
 
-print(f"  grid time dim: {time_dim_grid}, steps: {len(ds_grid[time_dim_grid])}")
-print(f"  diad time dim: {time_dim_diad}, steps: {len(ds_diad[time_dim_diad])}")
-print(f"  grid vars: {list(ds_grid.data_vars)}")
-print(f"  diad vars: {list(ds_diad.data_vars)}")
+print(f"  grid time: {time_dim_grid}, steps: {len(ds_grid[time_dim_grid])}")
+print(f"  diad time: {time_dim_diad}, steps: {len(ds_diad[time_dim_diad])}")
 
-# 좌표
 lon2d = ds_grid["nav_lon"].values
 lat2d = ds_grid["nav_lat"].values
 deptht = ds_grid["deptht"].values
 ny, nx = lon2d.shape
+nz = len(deptht)
 
 print(f"  격자: ({ny}, {nx}), 총 {ny*nx}")
-print(f"  deptht ({len(deptht)} levels): {np.round(deptht, 1)}")
+print(f"  deptht ({nz} levels): {np.round(deptht, 1)}")
 
 # =============================================================
-# 레벨 두께 계산
+# [1] domcfg: bottom_level, e3t_0, tmask
 # =============================================================
-print("\n[0b] 레벨 두께...")
-if "deptht_bounds" in ds_grid:
-    dz_bnds = ds_grid["deptht_bounds"].values  # (31, 2)
-    layer_dz = dz_bnds[:, 1] - dz_bnds[:, 0]
-    level_bottom = dz_bnds[:, 1]
-    print("  deptht_bounds 사용")
-else:
-    # fallback: 중간점 방식
-    layer_dz = np.zeros(len(deptht))
-    layer_dz[0] = (deptht[0] + deptht[1]) / 2.0
-    for k in range(1, len(deptht) - 1):
-        layer_dz[k] = (deptht[k+1] - deptht[k-1]) / 2.0
-    layer_dz[-1] = layer_dz[-2]
-    level_bottom = deptht + layer_dz / 2.0
-    print("  deptht_bounds 없음 -> 중간점 방식")
+print("\n[1] domcfg 로드...")
+bottom_level = ds_dom["bottom_level"].values  # (y, x), 0=land
+e3t_0 = ds_dom["e3t_0"].values               # (z, y, x) 실제 셀 두께
 
-print(f"  layer_dz: {np.round(layer_dz, 1)}")
-print(f"  level_bottom: {np.round(level_bottom, 1)}")
+print(f"  bottom_level shape: {bottom_level.shape}")
+print(f"  bottom_level range: {bottom_level.min()} ~ {bottom_level.max()}")
+print(f"  e3t_0 shape: {e3t_0.shape}")
 
-dz_da = xr.DataArray(layer_dz, dims=["deptht"],
-                      coords={"deptht": deptht})
-
-# =============================================================
-# 1. Bathymetry 재구성 (thetao 3D mask)
-# =============================================================
-print("\n[1] Bathymetry 재구성...")
-
-theta0 = ds_grid["thetao"].isel({time_dim_grid: 0}).values  # (31, y, x)
-theta0 = np.where(np.abs(theta0) > 1e10, np.nan, theta0)
-valid_mask = ~np.isnan(theta0)  # (31, y, x)
-
-print(f"  theta0 shape: {theta0.shape}")
-print(f"  valid per level: {[int(valid_mask[k].sum()) for k in range(len(deptht))]}")
-
-# 깊은 레벨부터 올라오며 가장 깊은 유효 레벨의 하한 = bathymetry
-depth_bot = np.full((ny, nx), np.nan)
-for k in range(len(deptht) - 1, -1, -1):
-    update = np.isnan(depth_bot) & valid_mask[k]
-    depth_bot[update] = level_bottom[k]
-
-ocean_mask = ~np.isnan(depth_bot)
+# ocean mask
+ocean_mask = bottom_level > 0
 n_ocean = ocean_mask.sum()
-
 print(f"  바다 격자: {n_ocean}")
+
+# tmask 생성: k < bottom_level → 유효(1), 아니면 0
+k3d = np.arange(nz)[:, None, None]  # (z, 1, 1)
+tmask = (k3d < bottom_level[None, :, :]).astype(np.float64)  # (z, y, x)
+
+print(f"  tmask shape: {tmask.shape}")
+print(f"  tmask per level: {[int(tmask[k].sum()) for k in range(nz)]}")
+
+ds_dom.close()
+
+# =============================================================
+# [2] Bathymetry (depth) 계산
+# =============================================================
+print("\n[2] Bathymetry 계산...")
+
+# 누적 두께 → 각 레벨 하단 깊이
+cumsum_e3t = np.cumsum(e3t_0, axis=0)  # (z, y, x)
+
+# depth_bot = cumsum_e3t[bottom_level - 1] (fancy indexing)
+yy, xx = np.meshgrid(np.arange(ny), np.arange(nx), indexing="ij")
+bl_idx = np.clip(bottom_level - 1, 0, nz - 1)
+depth_bot = cumsum_e3t[bl_idx, yy, xx]
+depth_bot[~ocean_mask] = np.nan
+
 print(f"  depth range: {np.nanmin(depth_bot):.1f} ~ {np.nanmax(depth_bot):.1f} m")
-
-if n_ocean == 0:
-    print("  *** ERROR: 바다 격자 0개! thetao 값 확인 필요 ***")
-    print(f"  theta0 min/max: {np.nanmin(theta0)}, {np.nanmax(theta0)}")
-    print(f"  theta0 NaN count: {np.isnan(theta0).sum()} / {theta0.size}")
-    raise ValueError("No ocean grid cells found")
+print(f"  depth mean:  {np.nanmean(depth_bot):.1f} m")
 
 # =============================================================
-# 2. Tb: sbt (sea bottom temperature)
+# [3] Tb: sbt (sea bottom temperature)
 # =============================================================
-print("\n[2] Tb (sbt)...")
+print("\n[3] Tb (sbt)...")
 
 Tb = ds_grid["sbt"].mean(dim=time_dim_grid).values
 Tb = np.where(np.abs(Tb) > 1e10, np.nan, Tb)
+Tb[~ocean_mask] = np.nan
 
-n_valid_Tb = np.count_nonzero(~np.isnan(Tb))
-print(f"  shape: {Tb.shape}, valid: {n_valid_Tb}")
+print(f"  valid: {np.count_nonzero(~np.isnan(Tb))}")
 print(f"  range: {np.nanmin(Tb):.2f} ~ {np.nanmax(Tb):.2f} C")
 
 # =============================================================
-# 3. Tp: thetao 0-100m 깊이 가중 평균
+# [4] thetao 시간평균 + tmask 적용
 # =============================================================
-print("\n[3] Tp (thetao 0-100m)...")
+print("\n[4] thetao 시간평균...")
+
+thetao_mean = ds_grid["thetao"].mean(dim=time_dim_grid).values  # (z, y, x)
+thetao_mean = np.where(np.abs(thetao_mean) > 1e10, np.nan, thetao_mean)
+
+# tmask 적용: 해저 아래 → NaN
+thetao_masked = np.where(tmask == 1, thetao_mean, np.nan)
+
+print(f"  thetao_masked shape: {thetao_masked.shape}")
+
+# =============================================================
+# [5] Tp: 0-100m 깊이가중 평균 (e3t_0 사용)
+# =============================================================
+print("\n[5] Tp (thetao 0-100m)...")
 
 idx_tp = np.where(deptht <= 100)[0]
-print(f"  levels: {np.round(deptht[idx_tp], 1)}")
-print(f"  weights: {np.round(layer_dz[idx_tp], 1)}")
+print(f"  levels: {idx_tp} → deptht = {np.round(deptht[idx_tp], 1)}")
 
-wt_tp = xr.DataArray(layer_dz[idx_tp], dims=["deptht"])
-temp_tp = ds_grid["thetao"].isel(deptht=idx_tp)
-Tp = (temp_tp * wt_tp).sum(dim="deptht") / wt_tp.sum()
-Tp = Tp.mean(dim=time_dim_grid).values
-Tp = np.where(np.abs(Tp) > 1e10, np.nan, Tp)
+# weight = e3t_0 × tmask (해저 아래는 두께 0)
+e3t_tp = e3t_0[idx_tp] * tmask[idx_tp]  # (n_lev, y, x)
+theta_tp = thetao_masked[idx_tp]
 
-n_valid_Tp = np.count_nonzero(~np.isnan(Tp))
-print(f"  shape: {Tp.shape}, valid: {n_valid_Tp}")
+weight_sum = np.nansum(e3t_tp, axis=0)
+weighted_theta = np.nansum(theta_tp * e3t_tp, axis=0)
+
+Tp = np.where(weight_sum > 0, weighted_theta / weight_sum, np.nan)
+Tp[~ocean_mask] = np.nan
+
+print(f"  valid: {np.count_nonzero(~np.isnan(Tp))}")
 print(f"  range: {np.nanmin(Tp):.2f} ~ {np.nanmax(Tp):.2f} C")
 
 # =============================================================
-# 4. Tm: thetao 500-1500m 깊이 가중 평균
+# [6] Tm: 500-1500m 깊이가중 평균
 # =============================================================
-print("\n[4] Tm (thetao 500-1500m)...")
+print("\n[6] Tm (thetao 500-1500m)...")
 
 idx_tm = np.where((deptht >= 500) & (deptht <= 1500))[0]
-print(f"  levels: {np.round(deptht[idx_tm], 1)}")
+print(f"  levels: {idx_tm} → deptht = {np.round(deptht[idx_tm], 1)}")
 
 if len(idx_tm) > 0:
-    wt_tm = xr.DataArray(layer_dz[idx_tm], dims=["deptht"])
-    temp_tm = ds_grid["thetao"].isel(deptht=idx_tm)
-    Tm = (temp_tm * wt_tm).sum(dim="deptht") / wt_tm.sum()
-    Tm = Tm.mean(dim=time_dim_grid).values
-    Tm = np.where(np.abs(Tm) > 1e10, np.nan, Tm)
+    e3t_tm = e3t_0[idx_tm] * tmask[idx_tm]
+    theta_tm = thetao_masked[idx_tm]
+    weight_sum_tm = np.nansum(e3t_tm, axis=0)
+    weighted_theta_tm = np.nansum(theta_tm * e3t_tm, axis=0)
+    Tm = np.where(weight_sum_tm > 0, weighted_theta_tm / weight_sum_tm, np.nan)
 else:
-    print("  WARNING: 500-1500m 없음 -> 최하층 사용")
-    Tm = ds_grid["thetao"].isel(deptht=-1).mean(dim=time_dim_grid).values
-    Tm = np.where(np.abs(Tm) > 1e10, np.nan, Tm)
+    Tm = np.full((ny, nx), np.nan)
 
-# 얕은 해역 (500m 미만): Tm NaN -> Tb로 대체
+# 얕은 해역 (500m 미만): Tm NaN → Tb로 대체
 n_shallow = int((np.isnan(Tm) & ocean_mask).sum())
 Tm = np.where(np.isnan(Tm) & ocean_mask, Tb, Tm)
+Tm[~ocean_mask] = np.nan
+
 print(f"  얕은 해역 Tb 대체: {n_shallow}개")
 print(f"  range: {np.nanmin(Tm):.2f} ~ {np.nanmax(Tm):.2f} C")
 
 ds_grid.close()
 
 # =============================================================
-# 5. Heup -> photic (유광층 깊이)
+# [7] Heup → photic (유광층 깊이)
 # =============================================================
-print("\n[5] photic (Heup)...")
+print("\n[7] photic (Heup)...")
 
 photic = ds_diad["Heup"].mean(dim=time_dim_diad).values
 photic = np.where(np.abs(photic) > 1e10, np.nan, photic)
+photic[~ocean_mask] = np.nan
 
-print(f"  shape: {photic.shape}")
 print(f"  range: {np.nanmin(photic):.1f} ~ {np.nanmax(photic):.1f} m")
 
 # =============================================================
-# 6. EPC100 -> dfbot (Martin curve)
+# [8] EPC100 → dfbot (Martin curve)
 # =============================================================
-print("\n[6] dfbot (EPC100 -> Martin curve)...")
+print("\n[8] dfbot (EPC100 → Martin curve)...")
 
 epc100 = ds_diad["EPC100"].mean(dim=time_dim_diad).values  # mol C/m2/s
 epc100 = np.where(np.abs(epc100) > 1e10, np.nan, epc100)
 
-# 단위 변환: mol C/m2/s -> g ww/m2/yr at 100m
+# mol C/m2/s → g ww/m2/yr at 100m
 epc100_gww = epc100 * CONV
-print(f"  EPC100 (mol C/m2/s): {np.nanmin(epc100):.2e} ~ {np.nanmax(epc100):.2e}")
-print(f"  EPC100 (g ww/m2/yr at 100m): {np.nanmin(epc100_gww):.2f} ~ {np.nanmax(epc100_gww):.2f}")
+print(f"  EPC100 (mol/m2/s): {np.nanmin(epc100):.2e} ~ {np.nanmax(epc100):.2e}")
+print(f"  EPC100 (gww/m2/yr): {np.nanmin(epc100_gww):.2f} ~ {np.nanmax(epc100_gww):.2f}")
 
-# Martin curve: F(z_bot) = F(100m) x (z_bot/100)^(-b)
+# Martin curve: F(z_bot) = F(100m) × (z_bot/100)^(-b)
 depth_martin = np.maximum(depth_bot, 100.0)
 dfbot = epc100_gww * np.power(depth_martin / 100.0, -MARTIN_B)
-print(f"  dfbot (at seafloor): {np.nanmin(dfbot):.4f} ~ {np.nanmax(dfbot):.2f}")
+print(f"  dfbot range: {np.nanmin(dfbot):.4f} ~ {np.nanmax(dfbot):.2f}")
 
 # =============================================================
-# 7. GRAZ1 -> szprod, GRAZ2 -> lzprod (수직적분 + 단위 변환)
+# [9] GRAZ1 → szprod, GRAZ2 → lzprod (tmask × e3t_0 적분)
 # =============================================================
-print("\n[7] szprod/lzprod (GRAZ1/GRAZ2)...")
+print("\n[9] szprod/lzprod (GRAZ1/GRAZ2)...")
 
-graz1_mean = ds_diad["GRAZ1"].mean(dim=time_dim_diad)  # (deptht, y, x) mol/m3/s
-graz2_mean = ds_diad["GRAZ2"].mean(dim=time_dim_diad)
+graz1_mean = ds_diad["GRAZ1"].mean(dim=time_dim_diad).values  # (z, y, x) mol/m3/s
+graz2_mean = ds_diad["GRAZ2"].mean(dim=time_dim_diad).values
 
-print(f"  GRAZ1 after time mean: {graz1_mean.shape} (should be 3D: deptht,y,x)")
-print(f"  GRAZ2 after time mean: {graz2_mean.shape}")
+graz1_mean = np.where(np.abs(graz1_mean) > 1e10, np.nan, graz1_mean)
+graz2_mean = np.where(np.abs(graz2_mean) > 1e10, np.nan, graz2_mean)
 
-# 수직적분: sum( GRAZ(k) x dz(k) ) -> mol C/m2/s
-graz1_int = (graz1_mean * dz_da).sum(dim="deptht").values  # (y, x)
-graz2_int = (graz2_mean * dz_da).sum(dim="deptht").values
+print(f"  GRAZ1 shape: {graz1_mean.shape}")
 
-graz1_int = np.where(np.abs(graz1_int) > 1e10, np.nan, graz1_int)
-graz2_int = np.where(np.abs(graz2_int) > 1e10, np.nan, graz2_int)
+# 수직적분: sum(GRAZ × e3t_0 × tmask) → mol C/m2/s
+graz1_int = np.nansum(graz1_mean * e3t_0 * tmask, axis=0)  # (y, x)
+graz2_int = np.nansum(graz2_mean * e3t_0 * tmask, axis=0)
 
-print(f"  after vertical integration: {graz1_int.shape} (should be 2D: y,x)")
-
-# mol C/m2/s -> g ww/m2/yr
+# mol C/m2/s → g ww/m2/yr
 szprod = graz1_int * CONV
 lzprod = graz2_int * CONV
 
-print(f"  szprod: {np.nanmin(szprod):.2f} ~ {np.nanmax(szprod):.2f} g ww/m2/yr")
-print(f"  lzprod: {np.nanmin(lzprod):.2f} ~ {np.nanmax(lzprod):.2f} g ww/m2/yr")
+szprod[~ocean_mask] = np.nan
+lzprod[~ocean_mask] = np.nan
+
+print(f"  szprod: {np.nanmin(szprod):.2f} ~ {np.nanmax(szprod):.2f} gww/m2/yr")
+print(f"  lzprod: {np.nanmin(lzprod):.2f} ~ {np.nanmax(lzprod):.2f} gww/m2/yr")
 
 ds_diad.close()
 
 # =============================================================
-# 8. DataFrame 생성
+# [10] DataFrame 생성
 # =============================================================
-print("\n[8] DataFrame 생성...")
+print("\n[10] DataFrame 생성...")
 
-# shape 검증
 arrays = {
     "lon": lon2d, "lat": lat2d, "depth": depth_bot,
     "Tp": Tp, "Tm": Tm, "Tb": Tb,
@@ -244,7 +246,7 @@ arrays = {
 print("  Shape 검증:")
 for name, arr in arrays.items():
     print(f"    {name:8s}: {arr.shape}")
-    assert arr.shape == (ny, nx), f"{name} shape mismatch! expected ({ny},{nx})"
+    assert arr.shape == (ny, nx), f"{name} shape mismatch!"
 
 df = pd.DataFrame({
     "lon":    lon2d.ravel(),
@@ -269,7 +271,7 @@ print(f"  바다: {len(df)}")
 for col in ["lzprod", "szprod", "dfbot"]:
     n_neg = (df[col] < 0).sum()
     if n_neg > 0:
-        print(f"  {col}: 음수 {n_neg}개 -> 0")
+        print(f"  {col}: 음수 {n_neg}개 → 0")
         df[col] = df[col].clip(lower=0)
 
 # NaN 잔여 확인
@@ -280,16 +282,16 @@ for col in df.columns:
         print(f"    {col}: {n_nan}")
 
 # =============================================================
-# 9. 저장
+# [11] 저장
 # =============================================================
 out_file = f"{OUT_DIR}/Input_NEMO_FEISTY.csv"
 df.to_csv(out_file, index=False)
 
-print(f"\n[9] 저장: {out_file}")
+print(f"\n[11] 저장: {out_file}")
 print(f"  격자 수: {len(df)}")
 
 # =============================================================
-# 10. 요약 통계
+# [12] 요약 통계
 # =============================================================
 print(f"\n{'='*60}")
 print("데이터 요약")
@@ -297,7 +299,7 @@ print(f"{'='*60}")
 print(df.describe().round(3).to_string())
 
 # =============================================================
-# 11. 검증 플롯
+# [13] 검증 플롯
 # =============================================================
 try:
     import matplotlib
@@ -333,7 +335,7 @@ try:
         ax.set_ylim(-90, 90)
         plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.suptitle("NEMO-PISCES -> FEISTY Input (10yr mean)", fontsize=13)
+    fig.suptitle("NEMO-PISCES -> FEISTY Input (10yr mean, domcfg)", fontsize=13)
     plt.tight_layout()
 
     fig_path = f"{OUT_DIR}/Input_NEMO_FEISTY_check.png"
