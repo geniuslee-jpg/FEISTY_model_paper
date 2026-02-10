@@ -19,6 +19,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 grid_file = f"{SUBSET_DIR}/grid_T_10yr.nc"
 diad_file = f"{SUBSET_DIR}/diad_T_1m_10yr.nc"
+ptrc_file = f"{SUBSET_DIR}/ptrc_T_1m_10yr.nc"
 domcfg_file = f"{BASE_DIR}/01.org/ORCA_R2_zps_domcfg.nc"
 
 # 단위 변환: mol C/m2/s → g wet weight/m2/yr
@@ -32,6 +33,7 @@ print("=" * 60)
 print("NEMO-PISCES → FEISTY Input (domcfg version)")
 print(f"grid:   {grid_file}")
 print(f"diad:   {diad_file}")
+print(f"ptrc:   {ptrc_file}")
 print(f"domcfg: {domcfg_file}")
 print("=" * 60)
 
@@ -175,15 +177,34 @@ print(f"  range: {np.nanmin(Tm):.2f} ~ {np.nanmax(Tm):.2f} C")
 ds_grid.close()
 
 # =============================================================
-# [7] Heup → photic (유광층 깊이)
+# [7] photic: Morel & Berthon (1989) 공식 (Reference와 동일)
+#     Ctot = 40.6 × Csur^0.459
+#     Zeu  = 568.2 × Ctot^(-0.746)
+#     Csur = 표층 총 클로로필 (mg Chl/m3)
 # =============================================================
-print("\n[7] photic (Heup)...")
+print("\n[7] photic (Morel & Berthon 1989, from PISCES surface Chl)...")
 
-photic = ds_diad["Heup"].mean(dim=time_dim_diad).values
-photic = np.where(np.abs(photic) > 1e10, np.nan, photic)
+ds_ptrc = xr.open_dataset(ptrc_file, decode_times=False)
+time_dim_ptrc = [d for d in ds_ptrc["NCHL"].dims if "time" in d][0]
+
+# 표층 (레벨 0) 클로로필 시간평균
+nchl_surf = ds_ptrc["NCHL"].isel(deptht=0).mean(dim=time_dim_ptrc).values
+dchl_surf = ds_ptrc["DCHL"].isel(deptht=0).mean(dim=time_dim_ptrc).values
+nchl_surf = np.where(np.abs(nchl_surf) > 1e10, np.nan, nchl_surf)
+dchl_surf = np.where(np.abs(dchl_surf) > 1e10, np.nan, dchl_surf)
+
+# PISCES 단위: gChl/m3 → mgChl/m3 (× 1000)
+Csur = (nchl_surf + dchl_surf) * 1000.0
+print(f"  Csur (mg/m3): {np.nanmin(Csur):.4f} ~ {np.nanmax(Csur):.4f}")
+
+# Morel & Berthon (1989)
+Ctot = 40.6 * np.power(np.maximum(Csur, 1e-6), 0.459)
+photic = 568.2 * np.power(Ctot, -0.746)
 photic[~ocean_mask] = np.nan
 
-print(f"  range: {np.nanmin(photic):.1f} ~ {np.nanmax(photic):.1f} m")
+ds_ptrc.close()
+
+print(f"  photic range: {np.nanmin(photic):.1f} ~ {np.nanmax(photic):.1f} m")
 
 # =============================================================
 # [8] EPC100 → dfbot (Martin curve)

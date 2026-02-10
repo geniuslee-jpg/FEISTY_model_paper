@@ -30,6 +30,11 @@ cdo seltimestep,1/120 -selvar,Heup,EPC100,GRAZ1,GRAZ2 \
     "${ORG_DIR}/ORCA2_1m_00010101_00501231_diad_T.nc" \
     "${OUT_DIR}/diad_T_1m_10yr.nc"
 
+# ptrc_T: NCHL + DCHL (표층 클로로필 → Morel & Berthon 유광층 계산용)
+cdo seltimestep,1/120 -selvar,NCHL,DCHL \
+    "${ORG_DIR}/ORCA2_1m_00010101_00501231_ptrc_T.nc" \
+    "${OUT_DIR}/ptrc_T_1m_10yr.nc"
+
 echo ""
 echo "=== [2] Regrid to ${TARGET} ==="
 
@@ -50,6 +55,12 @@ cdo remapbil,${TARGET} \
     "${OUT_DIR}/diad_T_1y_10yr.nc" \
     "${OUT_DIR}/diad_T_1y_10yr_1deg.nc"
 echo "  diad_T_1y done"
+
+# ptrc_T 1m → 1도
+cdo remapbil,${TARGET} \
+    "${OUT_DIR}/ptrc_T_1m_10yr.nc" \
+    "${OUT_DIR}/ptrc_T_1m_10yr_1deg.nc"
+echo "  ptrc_T_1m done"
 
 # =============================================================
 # 3. domcfg regrid (bottom_level, e3t_0)
