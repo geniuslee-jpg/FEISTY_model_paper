@@ -35,6 +35,11 @@ cdo seltimestep,1/120 -selvar,NCHL,DCHL \
     "${ORG_DIR}/ORCA2_1m_00010101_00501231_ptrc_T.nc" \
     "${OUT_DIR}/ptrc_T_1m_10yr.nc"
 
+# ptrc_T (연평균): ZOO + ZOO2 (closure term 계산용)
+cdo selvar,ZOO,ZOO2 \
+    "${ORG_DIR}/ORCA2_1y_00010101_00501231_ptrc_T.nc" \
+    "${OUT_DIR}/ptrc_T_1y_zoo.nc"
+
 echo ""
 echo "=== [2] Regrid to ${TARGET} ==="
 

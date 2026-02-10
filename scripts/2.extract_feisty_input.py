@@ -19,12 +19,19 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 grid_file = f"{SUBSET_DIR}/grid_T_10yr.nc"
 diad_file = f"{SUBSET_DIR}/diad_T_1m_10yr.nc"
-ptrc_file = f"{SUBSET_DIR}/ptrc_T_1m_10yr.nc"
+zoo_file = f"{BASE_DIR}/01.org/ORCA2_1y_00010101_00501231_ptrc_T.nc"
 domcfg_file = f"{BASE_DIR}/01.org/ORCA_R2_zps_domcfg.nc"
 
 # 단위 변환: mol C/m2/s → g wet weight/m2/yr
-# = sec_per_yr(365*86400) × g_per_mol(12) × ww_per_C(9)
 CONV = 365 * 86400 * 12.0 * 9.0  # = 3,405,888,000
+
+# Closure term 단위 변환: mmol C/m3/day → (적분 후) g ww/m2/yr
+# = 1e-3(mmol→mol) × 365(day→yr) × 12(mol C→g C) × 9(g C→g ww)
+CONV_CLOSURE = 1e-3 * 365 * 12.0 * 9.0  # = 39.42
+
+# PISCES 2차 사망률 계수 (namelist_pisces_ref)
+MZRAT = 0.02    # microzooplankton (/day/(mmol/m3))
+MZRAT2 = 0.01   # mesozooplankton  (/day/(mmol/m3))
 
 # Martin curve exponent
 MARTIN_B = 0.858
@@ -33,8 +40,9 @@ print("=" * 60)
 print("NEMO-PISCES → FEISTY Input (domcfg version)")
 print(f"grid:   {grid_file}")
 print(f"diad:   {diad_file}")
-print(f"ptrc:   {ptrc_file}")
+print(f"zoo:    {zoo_file}")
 print(f"domcfg: {domcfg_file}")
+print(f"MZRAT={MZRAT}, MZRAT2={MZRAT2}")
 print("=" * 60)
 
 # =============================================================
@@ -177,35 +185,15 @@ print(f"  range: {np.nanmin(Tm):.2f} ~ {np.nanmax(Tm):.2f} C")
 ds_grid.close()
 
 # =============================================================
-# [7] photic: Morel & Berthon (1989) 공식 (Reference와 동일)
-#     Ctot = 40.6 × Csur^0.459
-#     Zeu  = 568.2 × Ctot^(-0.746)
-#     Csur = 표층 총 클로로필 (mg Chl/m3)
+# [7] Heup → photic (PISCES 유광층 깊이)
 # =============================================================
-print("\n[7] photic (Morel & Berthon 1989, from PISCES surface Chl)...")
+print("\n[7] photic (Heup)...")
 
-ds_ptrc = xr.open_dataset(ptrc_file, decode_times=False)
-time_dim_ptrc = [d for d in ds_ptrc["NCHL"].dims if "time" in d][0]
-
-# 표층 (레벨 0) 클로로필 시간평균
-nchl_surf = ds_ptrc["NCHL"].isel(deptht=0).mean(dim=time_dim_ptrc).values
-dchl_surf = ds_ptrc["DCHL"].isel(deptht=0).mean(dim=time_dim_ptrc).values
-nchl_surf = np.where(np.abs(nchl_surf) > 1e10, np.nan, nchl_surf)
-dchl_surf = np.where(np.abs(dchl_surf) > 1e10, np.nan, dchl_surf)
-
-# PISCES 단위: 파일에는 gChl/m3로 표기되나 실제 mgChl/m3인 경우 많음
-# Csur 출력값 확인 후 판단 (전구 표층 Chl-a ~0.01-30 mg/m3 범위)
-Csur = (nchl_surf + dchl_surf)  # 단위 변환 없이 사용
-print(f"  Csur (mg/m3): {np.nanmin(Csur):.4f} ~ {np.nanmax(Csur):.4f}")
-
-# Morel & Berthon (1989)
-Ctot = 40.6 * np.power(np.maximum(Csur, 1e-6), 0.459)
-photic = 568.2 * np.power(Ctot, -0.746)
+photic = ds_diad["Heup"].mean(dim=time_dim_diad).values
+photic = np.where(np.abs(photic) > 1e10, np.nan, photic)
 photic[~ocean_mask] = np.nan
 
-ds_ptrc.close()
-
-print(f"  photic range: {np.nanmin(photic):.1f} ~ {np.nanmax(photic):.1f} m")
+print(f"  range: {np.nanmin(photic):.1f} ~ {np.nanmax(photic):.1f} m")
 
 # =============================================================
 # [8] EPC100 → dfbot (Martin curve)
@@ -226,25 +214,36 @@ dfbot = epc100_gww * np.power(depth_martin / 100.0, -MARTIN_B)
 print(f"  dfbot range: {np.nanmin(dfbot):.4f} ~ {np.nanmax(dfbot):.2f}")
 
 # =============================================================
-# [9] GRAZ1 → szprod, GRAZ2 → lzprod (tmask × e3t_0 적분)
+# [9] Closure term: mzrat × ZOO², mzrat2 × ZOO2²
+#     Reference(COBALT)의 density-dependent closure term과 동일 개념
+#     = 상위 포식자(물고기)에 의한 동물플랑크톤 에너지 손실
 # =============================================================
-print("\n[9] szprod/lzprod (GRAZ1/GRAZ2)...")
+print("\n[9] szprod/lzprod (closure term: mzrat × ZOO²)...")
 
-graz1_mean = ds_diad["GRAZ1"].mean(dim=time_dim_diad).values  # (z, y, x) mol/m3/s
-graz2_mean = ds_diad["GRAZ2"].mean(dim=time_dim_diad).values
+ds_zoo = xr.open_dataset(zoo_file, decode_times=False)
+time_dim_zoo = [d for d in ds_zoo["ZOO"].dims if "time" in d][0]
 
-graz1_mean = np.where(np.abs(graz1_mean) > 1e10, np.nan, graz1_mean)
-graz2_mean = np.where(np.abs(graz2_mean) > 1e10, np.nan, graz2_mean)
+zoo_mean = ds_zoo["ZOO"].mean(dim=time_dim_zoo).values    # (z, y, x) mmol C/m3
+zoo2_mean = ds_zoo["ZOO2"].mean(dim=time_dim_zoo).values
 
-print(f"  GRAZ1 shape: {graz1_mean.shape}")
+zoo_mean = np.where(np.abs(zoo_mean) > 1e10, np.nan, zoo_mean)
+zoo2_mean = np.where(np.abs(zoo2_mean) > 1e10, np.nan, zoo2_mean)
 
-# 수직적분: sum(GRAZ × e3t_0 × tmask) → mol C/m2/s
-graz1_int = np.nansum(graz1_mean * e3t_0 * tmask, axis=0)  # (y, x)
-graz2_int = np.nansum(graz2_mean * e3t_0 * tmask, axis=0)
+print(f"  ZOO  shape: {zoo_mean.shape}")
+print(f"  ZOO  range: {np.nanmin(zoo_mean):.4f} ~ {np.nanmax(zoo_mean):.4f} mmol/m3")
+print(f"  ZOO2 range: {np.nanmin(zoo2_mean):.4f} ~ {np.nanmax(zoo2_mean):.4f} mmol/m3")
 
-# mol C/m2/s → g ww/m2/yr
-szprod = graz1_int * CONV
-lzprod = graz2_int * CONV
+# closure term = mzrat × ZOO² (mmol C/m3/day)
+closure_zoo = MZRAT * zoo_mean**2
+closure_zoo2 = MZRAT2 * zoo2_mean**2
+
+# 수직적분: sum(closure × e3t_0 × tmask) → mmol C/m2/day
+closure_zoo_int = np.nansum(closure_zoo * e3t_0 * tmask, axis=0)
+closure_zoo2_int = np.nansum(closure_zoo2 * e3t_0 * tmask, axis=0)
+
+# mmol C/m2/day → g ww/m2/yr
+szprod = closure_zoo_int * CONV_CLOSURE
+lzprod = closure_zoo2_int * CONV_CLOSURE
 
 szprod[~ocean_mask] = np.nan
 lzprod[~ocean_mask] = np.nan
@@ -252,6 +251,7 @@ lzprod[~ocean_mask] = np.nan
 print(f"  szprod: {np.nanmin(szprod):.2f} ~ {np.nanmax(szprod):.2f} gww/m2/yr")
 print(f"  lzprod: {np.nanmin(lzprod):.2f} ~ {np.nanmax(lzprod):.2f} gww/m2/yr")
 
+ds_zoo.close()
 ds_diad.close()
 
 # =============================================================
