@@ -296,6 +296,14 @@ for col in ["lzprod", "szprod", "dfbot"]:
         print(f"  {col}: 음수 {n_neg}개 → 0")
         df[col] = df[col].clip(lower=0)
 
+# 온도 하한 보정: 해수 어는점 = ~-1.8°C (35 PSU 기준)
+T_MIN = -1.8
+for col in ["Tb", "Tm", "Tp"]:
+    n_below = (df[col] < T_MIN).sum()
+    if n_below > 0:
+        print(f"  {col}: {T_MIN}°C 미만 {n_below}개 → {T_MIN}°C로 클리핑")
+        df[col] = df[col].clip(lower=T_MIN)
+
 # NaN 잔여 확인
 print("\n  NaN 개수:")
 for col in df.columns:
