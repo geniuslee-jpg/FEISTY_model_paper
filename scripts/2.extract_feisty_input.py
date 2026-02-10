@@ -243,13 +243,22 @@ closure_zoo2_int = np.nansum(closure_zoo2 * e3t_0 * tmask, axis=0)
 
 # mmol C/m2/day → g ww/m2/yr
 szprod = closure_zoo_int * CONV_CLOSURE
-lzprod = closure_zoo2_int * CONV_CLOSURE
+lzprod_raw = closure_zoo2_int * CONV_CLOSURE
+
+# lzprod 온도별 보정 (Reference: Stock et al. 2014, 2017)
+# ratio = loss_to_fish / max_production → lzprod = closure / ratio
+# 0°C→0.78, 10°C→0.85, 20°C→0.89, 30°C→0.91
+T_KNOTS = np.array([0.0, 10.0, 20.0, 30.0])
+R_KNOTS = np.array([0.78, 0.85, 0.89, 0.91])
+ratio_map = np.interp(np.clip(Tp, 0, 30), T_KNOTS, R_KNOTS)
+lzprod = lzprod_raw / ratio_map
 
 szprod[~ocean_mask] = np.nan
 lzprod[~ocean_mask] = np.nan
 
 print(f"  szprod: {np.nanmin(szprod):.2f} ~ {np.nanmax(szprod):.2f} gww/m2/yr")
-print(f"  lzprod: {np.nanmin(lzprod):.2f} ~ {np.nanmax(lzprod):.2f} gww/m2/yr")
+print(f"  lzprod (보정 전): {np.nanmin(lzprod_raw[ocean_mask]):.2f} ~ {np.nanmax(lzprod_raw[ocean_mask]):.2f}")
+print(f"  lzprod (보정 후): {np.nanmin(lzprod):.2f} ~ {np.nanmax(lzprod):.2f} gww/m2/yr")
 
 ds_zoo.close()
 ds_diad.close()
