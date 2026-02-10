@@ -19,7 +19,7 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 grid_file = f"{SUBSET_DIR}/grid_T_10yr.nc"
 diad_file = f"{SUBSET_DIR}/diad_T_1m_10yr.nc"
-domcfg_file = "/data01/labdisk/semin/work/model/nemo_5.0.1/cfgs/exp_50yrs/EXP00/ORCA_R2_zps_domcfg.nc"
+domcfg_file = f"{BASE_DIR}/01.org/ORCA_R2_zps_domcfg.nc"
 
 # 단위 변환: mol C/m2/s → g wet weight/m2/yr
 # = sec_per_yr(365*86400) × g_per_mol(12) × ww_per_C(9)

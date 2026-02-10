@@ -21,6 +21,7 @@ grid_file = f"{SUBSET_DIR}/grid_T_10yr_1deg.nc"
 diad_file = f"{SUBSET_DIR}/diad_T_1m_10yr_1deg.nc"
 bl_file   = f"{SUBSET_DIR}/bottom_level_1deg.nc"
 e3t_file  = f"{SUBSET_DIR}/e3t_0_1deg.nc"
+# domcfg 원본은 01.org/ORCA_R2_zps_domcfg.nc → CDO가 regrid해서 위 파일들 생성
 
 CONV = 365 * 86400 * 12.0 * 9.0
 MARTIN_B = 0.858

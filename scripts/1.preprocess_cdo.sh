@@ -5,7 +5,7 @@ set -e
 BASE_DIR="/data01/labdisk/sungjin/NEMO-FEISTY"
 ORG_DIR="${BASE_DIR}/01.org"
 OUT_DIR="${BASE_DIR}/02.subset"
-DOMCFG="/data01/labdisk/semin/work/model/nemo_5.0.1/cfgs/exp_50yrs/EXP00/ORCA_R2_zps_domcfg.nc"
+DOMCFG="${ORG_DIR}/ORCA_R2_zps_domcfg.nc"
 TARGET="r360x180"   # 1도 x 1도
 
 mkdir -p "${OUT_DIR}"
