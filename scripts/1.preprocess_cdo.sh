@@ -15,27 +15,22 @@ mkdir -p "${OUT_DIR}"
 # =============================================================
 echo "=== [1] Variable & time subsetting ==="
 
-cp "${ORG_DIR}/ORCA2_1y_00010101_00501231_grid_T_static.nc" \
-   "${OUT_DIR}/static_depth.nc"
-
+# grid_T (5d): thetao + sbt → 10년분 (730 steps = 73/yr × 10yr)
 cdo seltimestep,1/730 -selvar,thetao,sbt \
     "${ORG_DIR}/ORCA2_5d_00010101_00501231_grid_T.nc" \
     "${OUT_DIR}/grid_T_10yr.nc"
 
-cdo seltimestep,1/10 -selvar,Heup,EPC100,GRAZ1,GRAZ2 \
+# diad_T (1y): Heup + EPC100 → 10년분
+cdo seltimestep,1/10 -selvar,Heup,EPC100 \
     "${ORG_DIR}/ORCA2_1y_00010101_00501231_diad_T.nc" \
     "${OUT_DIR}/diad_T_1y_10yr.nc"
 
-cdo seltimestep,1/120 -selvar,Heup,EPC100,GRAZ1,GRAZ2 \
+# diad_T (1m): Heup + EPC100 → 10년분 (120 steps = 12/yr × 10yr)
+cdo seltimestep,1/120 -selvar,Heup,EPC100 \
     "${ORG_DIR}/ORCA2_1m_00010101_00501231_diad_T.nc" \
     "${OUT_DIR}/diad_T_1m_10yr.nc"
 
-# ptrc_T: NCHL + DCHL (표층 클로로필 → Morel & Berthon 유광층 계산용)
-cdo seltimestep,1/120 -selvar,NCHL,DCHL \
-    "${ORG_DIR}/ORCA2_1m_00010101_00501231_ptrc_T.nc" \
-    "${OUT_DIR}/ptrc_T_1m_10yr.nc"
-
-# ptrc_T (연평균): ZOO + ZOO2 (closure term 계산용)
+# ptrc_T (1y): ZOO + ZOO2 → closure term (mzrat × ZOO²) 계산용
 cdo selvar,ZOO,ZOO2 \
     "${ORG_DIR}/ORCA2_1y_00010101_00501231_ptrc_T.nc" \
     "${OUT_DIR}/ptrc_T_1y_zoo.nc"
@@ -60,12 +55,6 @@ cdo remapbil,${TARGET} \
     "${OUT_DIR}/diad_T_1y_10yr.nc" \
     "${OUT_DIR}/diad_T_1y_10yr_1deg.nc"
 echo "  diad_T_1y done"
-
-# ptrc_T 1m → 1도
-cdo remapbil,${TARGET} \
-    "${OUT_DIR}/ptrc_T_1m_10yr.nc" \
-    "${OUT_DIR}/ptrc_T_1m_10yr_1deg.nc"
-echo "  ptrc_T_1m done"
 
 # =============================================================
 # 3. domcfg regrid (bottom_level, e3t_0)
