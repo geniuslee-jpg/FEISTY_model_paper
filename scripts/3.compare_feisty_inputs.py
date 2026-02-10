@@ -12,6 +12,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 from scipy.stats import binned_statistic_2d
+from scipy.interpolate import griddata
+from scipy.spatial import cKDTree
 
 # =============================================================
 # 파일 경로
@@ -39,8 +41,8 @@ lon_centers = (lon_edges[:-1] + lon_edges[1:]) / 2  # -179.5 ~ 179.5
 lat_centers = (lat_edges[:-1] + lat_edges[1:]) / 2  # -89.5 ~ 89.5
 LON, LAT = np.meshgrid(lon_centers, lat_centers)
 
-def scatter_to_grid(df, var):
-    """산점 데이터를 1°×1° 격자로 binning (평균)."""
+def ref_to_grid(df, var):
+    """Reference (~1° 정규격자) → 1°×1° binning."""
     vals = df[var].values
     mask = np.isfinite(vals)
     result = binned_statistic_2d(
@@ -48,6 +50,19 @@ def scatter_to_grid(df, var):
         statistic="mean", bins=[lon_edges, lat_edges]
     )
     return result.statistic.T  # (nlat, nlon)
+
+def nemo_to_grid(df, var):
+    """NEMO ORCA2 (~2° 비정규격자) → 1°×1° nearest 보간 + 육지 마스킹."""
+    vals = df[var].values
+    mask = np.isfinite(vals)
+    points = np.column_stack([df["lon"].values[mask], df["lat"].values[mask]])
+    # nearest-neighbor 보간 (빈 셀 없이 채움)
+    grid = griddata(points, vals[mask], (LON, LAT), method="nearest")
+    # 육지 마스킹: 가장 가까운 데이터 포인트가 2.5° 이상이면 NaN
+    tree = cKDTree(points)
+    dist, _ = tree.query(np.column_stack([LON.ravel(), LAT.ravel()]))
+    grid[dist.reshape(LON.shape) > 2.5] = np.nan
+    return grid
 
 print("  Regridding to 1°×1°...")
 
@@ -90,8 +105,8 @@ print("\n[1] Side-by-side map (1° gridded)...")
 fig, axes = plt.subplots(nvar, 2, figsize=(20, 4 * nvar))
 
 for i, (var, label, cmap, vmin_fix, vmax_fix) in enumerate(variables):
-    ref_grid = scatter_to_grid(df_ref, var)
-    nemo_grid = scatter_to_grid(df_nemo, var)
+    ref_grid = ref_to_grid(df_ref, var)
+    nemo_grid = nemo_to_grid(df_nemo, var)
 
     # 통계 (NaN 제외)
     ref_finite = ref_grid[np.isfinite(ref_grid)]
@@ -172,8 +187,8 @@ print("\n[3] 변수별 개별 맵...")
 for var, label, cmap, vmin_fix, vmax_fix in variables:
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 5))
 
-    ref_grid = scatter_to_grid(df_ref, var)
-    nemo_grid = scatter_to_grid(df_nemo, var)
+    ref_grid = ref_to_grid(df_ref, var)
+    nemo_grid = nemo_to_grid(df_nemo, var)
 
     ref_f = ref_grid[np.isfinite(ref_grid)]
     nemo_f = nemo_grid[np.isfinite(nemo_grid)]
