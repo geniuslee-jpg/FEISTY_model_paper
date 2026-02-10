@@ -193,8 +193,9 @@ dchl_surf = ds_ptrc["DCHL"].isel(deptht=0).mean(dim=time_dim_ptrc).values
 nchl_surf = np.where(np.abs(nchl_surf) > 1e10, np.nan, nchl_surf)
 dchl_surf = np.where(np.abs(dchl_surf) > 1e10, np.nan, dchl_surf)
 
-# PISCES 단위: gChl/m3 → mgChl/m3 (× 1000)
-Csur = (nchl_surf + dchl_surf) * 1000.0
+# PISCES 단위: 파일에는 gChl/m3로 표기되나 실제 mgChl/m3인 경우 많음
+# Csur 출력값 확인 후 판단 (전구 표층 Chl-a ~0.01-30 mg/m3 범위)
+Csur = (nchl_surf + dchl_surf)  # 단위 변환 없이 사용
 print(f"  Csur (mg/m3): {np.nanmin(Csur):.4f} ~ {np.nanmax(Csur):.4f}")
 
 # Morel & Berthon (1989)
