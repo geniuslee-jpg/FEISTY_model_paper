@@ -265,17 +265,17 @@ print(f"  저장: {path4}")
 # =============================================================
 # [5] 요약 통계
 # =============================================================
-print(f"\n{'='*110}")
-print(f"{'변수':>15s} | {'Ref mean':>10s} {'Ref med':>10s} {'Ref max':>10s} | "
-      f"{'NEMO mean':>10s} {'NEMO med':>10s} {'NEMO max':>10s} | {'비율':>6s}")
-print("-" * 110)
+print(f"\n{'='*130}")
+print(f"{'변수':>15s} | {'Ref mean':>10s} {'Ref std':>10s} {'Ref min':>10s} {'Ref max':>10s} | "
+      f"{'NEMO mean':>10s} {'NEMO std':>10s} {'NEMO min':>10s} {'NEMO max':>10s} | {'ratio':>6s}")
+print("-" * 130)
 for var, label, _ in variables:
     r = df_ref[var].dropna()
     n = df_nemo[var].dropna()
     ratio = n.mean() / r.mean() if r.mean() != 0 else float("inf")
-    print(f"{var:>15s} | {r.mean():10.4f} {r.median():10.4f} {r.max():10.4f} | "
-          f"{n.mean():10.4f} {n.median():10.4f} {n.max():10.4f} | {ratio:5.2f}x")
-print(f"{'='*110}")
+    print(f"{var:>15s} | {r.mean():10.4f} {r.std():10.4f} {r.min():10.4f} {r.max():10.4f} | "
+          f"{n.mean():10.4f} {n.std():10.4f} {n.min():10.4f} {n.max():10.4f} | {ratio:5.2f}x")
+print(f"{'='*130}")
 
 print(f"\n완료!")
 print(f"  맵 전체:      {path1}")
