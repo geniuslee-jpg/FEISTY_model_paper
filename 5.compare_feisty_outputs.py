@@ -2,7 +2,8 @@
 """
 FEISTY Output 비교 검증 플롯
 - 레퍼런스 (Global_fish_biomass.RData) vs NEMO-PISCES (Global_fish_biomass.RData)
-- RData 파일을 읽기 위해 pyreadr 필요: pip install pyreadr
+- Mollweide 투영 + 1°×1° regridding (3.compare_feisty_inputs.py 스타일)
+- 필요 패키지: pyreadr, cartopy, scipy
 """
 
 import numpy as np
@@ -11,7 +12,12 @@ import pyreadr
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import LogNorm
+from scipy.stats import binned_statistic_2d
+from scipy.interpolate import griddata
+from scipy.spatial import cKDTree
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.util import add_cyclic_point
 
 # =============================================================
 # 파일 경로 (수정 필요)
@@ -40,123 +46,187 @@ print(f"  Reference: {len(df_ref)} points")
 print(f"  NEMO:      {len(df_nemo)} points")
 
 # =============================================================
-# 비교 변수 설정
+# 1° × 1° 정규 격자 정의
+# =============================================================
+lon_edges = np.arange(-180, 181, 1)
+lat_edges = np.arange(-90, 91, 1)
+lon_centers = (lon_edges[:-1] + lon_edges[1:]) / 2
+lat_centers = (lat_edges[:-1] + lat_edges[1:]) / 2
+LON, LAT = np.meshgrid(lon_centers, lat_centers)
+
+def ref_to_grid(df, var):
+    """Reference (~1° 정규격자) → 1°×1° binning."""
+    vals = df[var].values
+    mask = np.isfinite(vals)
+    result = binned_statistic_2d(
+        df["lon"].values[mask], df["lat"].values[mask], vals[mask],
+        statistic="mean", bins=[lon_edges, lat_edges]
+    )
+    return result.statistic.T
+
+def nemo_to_grid(df, var):
+    """NEMO ORCA2 (~2° 비정규격자) → 1°×1° nearest 보간 + 육지 마스킹."""
+    vals = df[var].values
+    mask = np.isfinite(vals)
+    points = np.column_stack([df["lon"].values[mask], df["lat"].values[mask]])
+    grid = griddata(points, vals[mask], (LON, LAT), method="nearest")
+    tree = cKDTree(points)
+    dist, _ = tree.query(np.column_stack([LON.ravel(), LAT.ravel()]))
+    grid[dist.reshape(LON.shape) > 2.5] = np.nan
+    return grid
+
+print("  Regridding to 1°×1°...")
+
+# =============================================================
+# 투영 설정
+# =============================================================
+PROJ = ccrs.Mollweide(central_longitude=0)
+DATA_CRS = ccrs.PlateCarree()
+
+def add_map_features(ax):
+    ax.set_global()
+    ax.coastlines(linewidth=0.4, color="k")
+    ax.add_feature(cfeature.LAND, facecolor="#d0d0d0", edgecolor="none", zorder=2)
+    ax.gridlines(draw_labels=False, linewidth=0.2, color="grey",
+                 alpha=0.5, linestyle="--")
+
+def plot_on_mollweide(ax, grid, cmap, vmin, vmax):
+    data_c, lon_c = add_cyclic_point(grid, coord=lon_centers)
+    pc = ax.pcolormesh(lon_c, lat_centers, data_c,
+                       transform=DATA_CRS,
+                       cmap=cmap, vmin=vmin, vmax=vmax,
+                       shading="auto", rasterized=True)
+    add_map_features(ax)
+    return pc
+
+# =============================================================
+# 비교 변수 설정 (log10 스케일 사용)
 # =============================================================
 variables = [
-    ("totB_smpel",    "Small pelagic [g/m2]",     "YlOrRd"),
-    ("totB_mesopel",  "Mesopelagic [g/m2]",       "YlOrRd"),
-    ("totB_largepel", "Large pelagic [g/m2]",     "YlOrRd"),
-    ("totB_midwpred", "Midwater predator [g/m2]", "YlOrRd"),
-    ("totB_dem",      "Demersal [g/m2]",          "YlOrRd"),
-    ("totB",          "Total biomass [g/m2]",     "viridis"),
+    ("totB_smpel",    "Small pelagic [g/m\u00b2]",     "YlOrRd"),
+    ("totB_mesopel",  "Mesopelagic [g/m\u00b2]",       "YlOrRd"),
+    ("totB_largepel", "Large pelagic [g/m\u00b2]",     "YlOrRd"),
+    ("totB_midwpred", "Midwater predator [g/m\u00b2]", "YlOrRd"),
+    ("totB_dem",      "Demersal [g/m\u00b2]",          "YlOrRd"),
+    ("totB",          "Total biomass [g/m\u00b2]",     "viridis"),
 ]
 
 nvar = len(variables)
 
 # =============================================================
-# 플롯 1: 나란히 비교 맵 (log scale)
+# [1] Side-by-side 맵 비교 (Mollweide 투영, log10 스케일)
 # =============================================================
-print("\n[1] Side-by-side map 생성 (log scale)...")
-fig, axes = plt.subplots(nvar, 2, figsize=(20, 4 * nvar))
+print("\n[1] Side-by-side map (Mollweide, log10 scale)...")
+fig, axes = plt.subplots(nvar, 2, figsize=(18, 4.5 * nvar),
+                         subplot_kw={"projection": PROJ})
 
 for i, (var, label, cmap) in enumerate(variables):
-    ref_vals  = df_ref[var].values
-    nemo_vals = df_nemo[var].values
+    ref_grid  = np.log10(np.maximum(ref_to_grid(df_ref, var), 1e-4))
+    nemo_grid = np.log10(np.maximum(nemo_to_grid(df_nemo, var), 1e-4))
 
-    # log10 변환 (0 이하는 작은 값으로 대체)
-    ref_log  = np.log10(np.maximum(ref_vals, 1e-4))
-    nemo_log = np.log10(np.maximum(nemo_vals, 1e-4))
-
-    # 공통 색상 범위
-    all_log = np.concatenate([ref_log[np.isfinite(ref_log)],
-                              nemo_log[np.isfinite(nemo_log)]])
-    vmin, vmax = np.nanpercentile(all_log, [2, 98])
+    ref_finite  = ref_grid[np.isfinite(ref_grid)]
+    nemo_finite = nemo_grid[np.isfinite(nemo_grid)]
+    all_finite  = np.concatenate([ref_finite, nemo_finite])
+    vmin, vmax  = np.nanpercentile(all_finite, [2, 98])
 
     # Reference
-    ax_ref = axes[i, 0]
-    sc = ax_ref.scatter(df_ref["lon"], df_ref["lat"], c=ref_log, s=0.3,
-                        cmap=cmap, vmin=vmin, vmax=vmax,
-                        edgecolors="none", rasterized=True)
-    ax_ref.set_xlim(-180, 180)
-    ax_ref.set_ylim(-90, 90)
-    ax_ref.set_title(f"Reference: {label}", fontsize=10)
-    cb = plt.colorbar(sc, ax=ax_ref, fraction=0.046, pad=0.04)
-    cb.set_label("log10(g/m2)", fontsize=7)
+    ax = axes[i, 0]
+    pc = plot_on_mollweide(ax, ref_grid, cmap, vmin, vmax)
+    ax.set_title(f"Reference: {label}", fontsize=10)
+    ax.text(0.02, 0.02,
+            f"mean={np.nanmean(ref_finite):.2f}, "
+            f"min={np.nanmin(ref_finite):.2f}, max={np.nanmax(ref_finite):.2f}",
+            transform=ax.transAxes, fontsize=7, va="bottom",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=5)
+    cb = plt.colorbar(pc, ax=ax, fraction=0.046, pad=0.04, orientation="horizontal")
+    cb.set_label("log10(g/m\u00b2)", fontsize=8)
 
     # NEMO
-    ax_nemo = axes[i, 1]
-    sc2 = ax_nemo.scatter(df_nemo["lon"], df_nemo["lat"], c=nemo_log, s=0.5,
-                          cmap=cmap, vmin=vmin, vmax=vmax,
-                          edgecolors="none", rasterized=True)
-    ax_nemo.set_xlim(-180, 180)
-    ax_nemo.set_ylim(-90, 90)
-    ax_nemo.set_title(f"NEMO-PISCES: {label}", fontsize=10)
-    cb2 = plt.colorbar(sc2, ax=ax_nemo, fraction=0.046, pad=0.04)
-    cb2.set_label("log10(g/m2)", fontsize=7)
+    ax = axes[i, 1]
+    pc = plot_on_mollweide(ax, nemo_grid, cmap, vmin, vmax)
+    ax.set_title(f"NEMO-PISCES: {label}", fontsize=10)
+    ax.text(0.02, 0.02,
+            f"mean={np.nanmean(nemo_finite):.2f}, "
+            f"min={np.nanmin(nemo_finite):.2f}, max={np.nanmax(nemo_finite):.2f}",
+            transform=ax.transAxes, fontsize=7, va="bottom",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=5)
+    cb = plt.colorbar(pc, ax=ax, fraction=0.046, pad=0.04, orientation="horizontal")
+    cb.set_label("log10(g/m\u00b2)", fontsize=8)
 
-    # 통계 표시 (원래 스케일)
-    ref_finite  = ref_vals[np.isfinite(ref_vals) & (ref_vals > 0)]
-    nemo_finite = nemo_vals[np.isfinite(nemo_vals) & (nemo_vals > 0)]
-    ax_ref.text(0.02, 0.02,
-                f"n={len(ref_finite)}, mean={np.nanmean(ref_finite):.3f}, "
-                f"median={np.nanmedian(ref_finite):.3f}, max={np.nanmax(ref_finite):.2f}",
-                transform=ax_ref.transAxes, fontsize=7, va="bottom",
-                bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-    ax_nemo.text(0.02, 0.02,
-                 f"n={len(nemo_finite)}, mean={np.nanmean(nemo_finite):.3f}, "
-                 f"median={np.nanmedian(nemo_finite):.3f}, max={np.nanmax(nemo_finite):.2f}",
-                 transform=ax_nemo.transAxes, fontsize=7, va="bottom",
-                 bbox=dict(boxstyle="round", facecolor="white", alpha=0.8))
-
-fig.suptitle("FEISTY Output Comparison: Reference vs NEMO-PISCES", fontsize=14, y=1.01)
+fig.suptitle("FEISTY Output: Reference vs NEMO-PISCES (Mollweide)", fontsize=14, y=1.01)
 plt.tight_layout()
-
 path1 = f"{out_dir}/compare_output_maps.png"
 plt.savefig(path1, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"  저장: {path1}")
 
 # =============================================================
-# 플롯 2: 히스토그램 비교 (log scale)
+# [2] 히스토그램 비교 (log10 스케일)
 # =============================================================
-print("\n[2] Histogram 비교 생성...")
+print("\n[2] Histogram...")
 fig, axes = plt.subplots(2, 3, figsize=(18, 9))
 
 for ax, (var, label, _) in zip(axes.ravel(), variables):
-    ref_vals  = df_ref[var].dropna().values
-    nemo_vals = df_nemo[var].dropna().values
+    rv = df_ref[var].dropna().values
+    nv = df_nemo[var].dropna().values
+    rv = np.log10(rv[rv > 0])
+    nv = np.log10(nv[nv > 0])
 
-    # log10 (양수만)
-    ref_pos  = ref_vals[ref_vals > 0]
-    nemo_pos = nemo_vals[nemo_vals > 0]
-    ref_log  = np.log10(ref_pos)
-    nemo_log = np.log10(nemo_pos)
-
-    all_log = np.concatenate([ref_log, nemo_log])
-    lo, hi = np.nanpercentile(all_log, [1, 99])
+    lo, hi = np.nanpercentile(np.concatenate([rv, nv]), [1, 99])
     bins = np.linspace(lo, hi, 60)
 
-    ax.hist(ref_log, bins=bins, alpha=0.5, label=f"Ref (n={len(ref_pos)})",
-            density=True, color="steelblue")
-    ax.hist(nemo_log, bins=bins, alpha=0.5, label=f"NEMO (n={len(nemo_pos)})",
-            density=True, color="tomato")
+    ax.hist(rv, bins=bins, alpha=0.5, density=True, color="steelblue",
+            label=f"Ref (n={len(rv)})")
+    ax.hist(nv, bins=bins, alpha=0.5, density=True, color="tomato",
+            label=f"NEMO (n={len(nv)})")
     ax.set_title(label, fontsize=10)
-    ax.set_xlabel("log10(g/m2)")
+    ax.set_xlabel("log10(g/m\u00b2)")
     ax.set_ylabel("density")
     ax.legend(fontsize=7)
+    ax.tick_params(axis="both", which="major", length=6, width=0.8)
 
 fig.suptitle("Biomass Distribution: Reference vs NEMO-PISCES", fontsize=14)
 plt.tight_layout()
-
 path2 = f"{out_dir}/compare_output_hist.png"
 plt.savefig(path2, dpi=150, bbox_inches="tight")
 plt.close()
 print(f"  저장: {path2}")
 
 # =============================================================
-# 플롯 3: 기능그룹별 비율 비교 (파이 차트 스타일 bar)
+# [3] 변수별 개별 맵 (Mollweide 투영, log10 스케일)
 # =============================================================
-print("\n[3] 기능그룹 비율 비교...")
+print("\n[3] 변수별 개별 맵...")
+for var, label, cmap in variables:
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 5),
+                                    subplot_kw={"projection": PROJ})
+
+    ref_grid  = np.log10(np.maximum(ref_to_grid(df_ref, var), 1e-4))
+    nemo_grid = np.log10(np.maximum(nemo_to_grid(df_nemo, var), 1e-4))
+
+    ref_f  = ref_grid[np.isfinite(ref_grid)]
+    nemo_f = nemo_grid[np.isfinite(nemo_grid)]
+    all_f  = np.concatenate([ref_f, nemo_f])
+    vmin, vmax = np.nanpercentile(all_f, [2, 98])
+
+    pc1 = plot_on_mollweide(ax1, ref_grid, cmap, vmin, vmax)
+    ax1.set_title(f"Reference: {label}", fontsize=12)
+    cb1 = plt.colorbar(pc1, ax=ax1, fraction=0.046, pad=0.04, orientation="horizontal")
+    cb1.set_label("log10(g/m\u00b2)", fontsize=8)
+
+    pc2 = plot_on_mollweide(ax2, nemo_grid, cmap, vmin, vmax)
+    ax2.set_title(f"NEMO-PISCES: {label}", fontsize=12)
+    cb2 = plt.colorbar(pc2, ax=ax2, fraction=0.046, pad=0.04, orientation="horizontal")
+    cb2.set_label("log10(g/m\u00b2)", fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(f"{out_dir}/compare_output_{var}.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"  {var} → compare_output_{var}.png")
+
+# =============================================================
+# [4] 기능그룹별 비율 비교 (bar chart)
+# =============================================================
+print("\n[4] 기능그룹 비율 비교...")
 fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
 group_labels = ["Small pel.", "Mesopelagic", "Large pel.", "Midwater pred.", "Demersal"]
@@ -165,52 +235,50 @@ colors = ["#FFD700", "#FFA500", "#FF4500", "#8B0000", "#4682B4"]
 ref_means  = [df_ref[c].mean()  for c in biomass_cols]
 nemo_means = [df_nemo[c].mean() for c in biomass_cols]
 
-# Reference
 ax = axes[0]
 bars = ax.barh(group_labels, ref_means, color=colors, edgecolor="black", linewidth=0.5)
-ax.set_xlabel("Mean biomass [g/m2]")
+ax.set_xlabel("Mean biomass [g/m\u00b2]")
 ax.set_title("Reference")
 for bar, val in zip(bars, ref_means):
     ax.text(bar.get_width() + 0.001, bar.get_y() + bar.get_height()/2,
             f"{val:.3f}", va="center", fontsize=8)
 
-# NEMO
 ax = axes[1]
 bars = ax.barh(group_labels, nemo_means, color=colors, edgecolor="black", linewidth=0.5)
-ax.set_xlabel("Mean biomass [g/m2]")
+ax.set_xlabel("Mean biomass [g/m\u00b2]")
 ax.set_title("NEMO-PISCES")
 for bar, val in zip(bars, nemo_means):
     ax.text(bar.get_width() + 0.001, bar.get_y() + bar.get_height()/2,
             f"{val:.3f}", va="center", fontsize=8)
 
-# 동일한 x축 범위
 xmax = max(max(ref_means), max(nemo_means)) * 1.3
 axes[0].set_xlim(0, xmax)
 axes[1].set_xlim(0, xmax)
 
 fig.suptitle("Functional Group Mean Biomass Comparison", fontsize=14)
 plt.tight_layout()
-
-path3 = f"{out_dir}/compare_output_groups.png"
-plt.savefig(path3, dpi=150, bbox_inches="tight")
+path4 = f"{out_dir}/compare_output_groups.png"
+plt.savefig(path4, dpi=150, bbox_inches="tight")
 plt.close()
-print(f"  저장: {path3}")
+print(f"  저장: {path4}")
 
 # =============================================================
-# 요약 통계 비교 테이블
+# [5] 요약 통계
 # =============================================================
-print("\n[4] 요약 통계 비교")
-all_vars = variables
-print(f"\n{'변수':>15s} | {'Ref mean':>10s} {'Ref med':>10s} {'Ref max':>10s} | {'NEMO mean':>10s} {'NEMO med':>10s} {'NEMO max':>10s} | {'ratio':>6s}")
-print("-" * 100)
-for var, label, _ in all_vars:
+print(f"\n{'='*110}")
+print(f"{'변수':>15s} | {'Ref mean':>10s} {'Ref med':>10s} {'Ref max':>10s} | "
+      f"{'NEMO mean':>10s} {'NEMO med':>10s} {'NEMO max':>10s} | {'비율':>6s}")
+print("-" * 110)
+for var, label, _ in variables:
     r = df_ref[var].dropna()
     n = df_nemo[var].dropna()
     ratio = n.mean() / r.mean() if r.mean() != 0 else float("inf")
     print(f"{var:>15s} | {r.mean():10.4f} {r.median():10.4f} {r.max():10.4f} | "
-          f"{n.mean():10.4f} {n.median():10.4f} {n.max():10.4f} | {ratio:6.2f}x")
+          f"{n.mean():10.4f} {n.median():10.4f} {n.max():10.4f} | {ratio:5.2f}x")
+print(f"{'='*110}")
 
 print(f"\n완료!")
-print(f"  맵 비교:      {path1}")
+print(f"  맵 전체:      {path1}")
 print(f"  히스토그램:    {path2}")
-print(f"  그룹별 비교:  {path3}")
+print(f"  그룹 비교:    {path4}")
+print(f"  개별 맵:      {out_dir}/compare_output_<var>.png")
