@@ -18,12 +18,13 @@ BASE_DIR <- "/data01/labdisk/sungjin/NEMO-FEISTY/04.run"
 OUT_DIR  <- "/data01/labdisk/sungjin/NEMO-FEISTY/05.figures"
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 
-# Reference: Global_fish_biomass.RData (quarto/data/ 에서 복사 또는 직접 지정)
-load(file.path(BASE_DIR, "Ref_fish_biomass.RData"))   # → out
+# Reference: quarto/data/ 에서 복사
+load(file.path(BASE_DIR, "data", "Ref_fish_biomass.RData"))   # → out
 df_ref <- out
 
-# NEMO: CSV 또는 RData
-df_nemo <- read.csv(file.path(BASE_DIR, "NEMO_fish_biomass.csv"))
+# NEMO: RData
+load(file.path(BASE_DIR, "data", "NEMO_fish_biomass.RData"))  # → out
+df_nemo <- out
 
 cat("Reference:", nrow(df_ref), "points\n")
 cat("NEMO:     ", nrow(df_nemo), "points\n")
@@ -32,7 +33,8 @@ cat("NEMO:     ", nrow(df_nemo), "points\n")
 # 데이터 전처리
 # =============================================================
 # lon 보정 (0~360 → -180~180)
-df_ref$lon <- ifelse(df_ref$lon > 179.5, df_ref$lon - 360, df_ref$lon)
+df_ref$lon  <- ifelse(df_ref$lon > 179.5,  df_ref$lon - 360,  df_ref$lon)
+df_nemo$lon <- ifelse(df_nemo$lon > 179.5, df_nemo$lon - 360, df_nemo$lon)
 
 # Total biomass 계산
 fish_cols <- c("totB_smpel", "totB_mesopel", "totB_largepel", "totB_midwpred", "totB_dem")

@@ -2,7 +2,7 @@
 """
 FEISTY Input 비교 검증 플롯
 - 레퍼런스 (Input_global.csv) vs NEMO-PISCES (Input_NEMO_FEISTY.csv)
-- 양쪽 모두 1°×1° (360×180) 정규 격자로 binning 후 pcolormesh
+- 양쪽 모두 1°×1° (360×180) 정규 격자로 binning 후 Robinson 투영
 """
 
 import numpy as np
@@ -10,10 +10,12 @@ import pandas as pd
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 from scipy.stats import binned_statistic_2d
 from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+from cartopy.util import add_cyclic_point
 
 # =============================================================
 # 파일 경로
@@ -67,20 +69,29 @@ def nemo_to_grid(df, var):
 print("  Regridding to 1°×1°...")
 
 # =============================================================
-# 축 스타일
+# 투영 설정
 # =============================================================
-def add_land(ax):
-    ax.set_facecolor("#d0d0d0")
-    ax.set_xlim(-180, 180)
-    ax.set_ylim(-90, 90)
-    ax.set_xlabel("Longitude", fontsize=9)
-    ax.set_ylabel("Latitude", fontsize=9)
-    ax.tick_params(axis="both", which="major", length=6, width=0.8, labelsize=8)
-    ax.tick_params(axis="both", which="minor", length=3, width=0.5)
-    ax.xaxis.set_major_locator(mticker.MultipleLocator(60))
-    ax.xaxis.set_minor_locator(mticker.MultipleLocator(30))
-    ax.yaxis.set_major_locator(mticker.MultipleLocator(30))
-    ax.yaxis.set_minor_locator(mticker.MultipleLocator(15))
+PROJ = ccrs.Robinson(central_longitude=0)
+DATA_CRS = ccrs.PlateCarree()
+
+def add_map_features(ax):
+    """Robinson 투영 축에 해안선 + 육지 추가."""
+    ax.set_global()
+    ax.coastlines(linewidth=0.4, color="k")
+    ax.add_feature(cfeature.LAND, facecolor="#d0d0d0", edgecolor="none", zorder=2)
+    ax.gridlines(draw_labels=False, linewidth=0.2, color="grey",
+                 alpha=0.5, linestyle="--")
+
+def plot_on_robinson(ax, grid, cmap, vmin, vmax):
+    """1°격자 데이터를 Robinson 투영에 pcolormesh."""
+    # cyclic point 추가 (경도 180° 줄 방지)
+    data_c, lon_c = add_cyclic_point(grid, coord=lon_centers)
+    pc = ax.pcolormesh(lon_c, lat_centers, data_c,
+                       transform=DATA_CRS,
+                       cmap=cmap, vmin=vmin, vmax=vmax,
+                       shading="auto", rasterized=True)
+    add_map_features(ax)
+    return pc
 
 # =============================================================
 # 비교 변수 + 컬러바 범위
@@ -99,10 +110,11 @@ variables = [
 nvar = len(variables)
 
 # =============================================================
-# [1] Side-by-side 맵 비교 (pcolormesh)
+# [1] Side-by-side 맵 비교 (Robinson 투영)
 # =============================================================
-print("\n[1] Side-by-side map (1° gridded)...")
-fig, axes = plt.subplots(nvar, 2, figsize=(20, 4 * nvar))
+print("\n[1] Side-by-side map (Robinson projection)...")
+fig, axes = plt.subplots(nvar, 2, figsize=(18, 4.5 * nvar),
+                         subplot_kw={"projection": PROJ})
 
 for i, (var, label, cmap, vmin_fix, vmax_fix) in enumerate(variables):
     ref_grid = ref_to_grid(df_ref, var)
@@ -120,33 +132,27 @@ for i, (var, label, cmap, vmin_fix, vmax_fix) in enumerate(variables):
 
     # Reference
     ax = axes[i, 0]
-    add_land(ax)
-    pc = ax.pcolormesh(lon_edges, lat_edges, ref_grid,
-                       cmap=cmap, vmin=vmin, vmax=vmax,
-                       shading="flat", rasterized=True, zorder=2)
+    pc = plot_on_robinson(ax, ref_grid, cmap, vmin, vmax)
     ax.set_title(f"Reference: {label}", fontsize=10)
     ax.text(0.02, 0.02,
             f"n={len(ref_finite)}, mean={np.nanmean(ref_finite):.1f}, "
             f"min={np.nanmin(ref_finite):.1f}, max={np.nanmax(ref_finite):.1f}",
             transform=ax.transAxes, fontsize=7, va="bottom",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=3)
-    plt.colorbar(pc, ax=ax, fraction=0.046, pad=0.04)
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=5)
+    plt.colorbar(pc, ax=ax, fraction=0.046, pad=0.04, orientation="horizontal")
 
     # NEMO
     ax = axes[i, 1]
-    add_land(ax)
-    pc = ax.pcolormesh(lon_edges, lat_edges, nemo_grid,
-                       cmap=cmap, vmin=vmin, vmax=vmax,
-                       shading="flat", rasterized=True, zorder=2)
+    pc = plot_on_robinson(ax, nemo_grid, cmap, vmin, vmax)
     ax.set_title(f"NEMO-PISCES: {label}", fontsize=10)
     ax.text(0.02, 0.02,
             f"n={len(nemo_finite)}, mean={np.nanmean(nemo_finite):.1f}, "
             f"min={np.nanmin(nemo_finite):.1f}, max={np.nanmax(nemo_finite):.1f}",
             transform=ax.transAxes, fontsize=7, va="bottom",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=3)
-    plt.colorbar(pc, ax=ax, fraction=0.046, pad=0.04)
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=5)
+    plt.colorbar(pc, ax=ax, fraction=0.046, pad=0.04, orientation="horizontal")
 
-fig.suptitle("FEISTY Input: Reference vs NEMO-PISCES (1\u00b0 grid)", fontsize=14, y=1.01)
+fig.suptitle("FEISTY Input: Reference vs NEMO-PISCES (Robinson)", fontsize=14, y=1.01)
 plt.tight_layout()
 plt.savefig(f"{BASE_DIR}/compare_maps.png", dpi=150, bbox_inches="tight")
 plt.close()
@@ -181,11 +187,12 @@ plt.close()
 print(f"  저장: {BASE_DIR}/compare_hist.png")
 
 # =============================================================
-# [3] 변수별 개별 맵
+# [3] 변수별 개별 맵 (Robinson 투영)
 # =============================================================
 print("\n[3] 변수별 개별 맵...")
 for var, label, cmap, vmin_fix, vmax_fix in variables:
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 5),
+                                    subplot_kw={"projection": PROJ})
 
     ref_grid = ref_to_grid(df_ref, var)
     nemo_grid = nemo_to_grid(df_nemo, var)
@@ -199,19 +206,13 @@ for var, label, cmap, vmin_fix, vmax_fix in variables:
         all_f = np.concatenate([ref_f, nemo_f])
         vmin, vmax = np.nanpercentile(all_f, [2, 98])
 
-    add_land(ax1)
-    pc1 = ax1.pcolormesh(lon_edges, lat_edges, ref_grid,
-                         cmap=cmap, vmin=vmin, vmax=vmax,
-                         shading="flat", rasterized=True, zorder=2)
+    pc1 = plot_on_robinson(ax1, ref_grid, cmap, vmin, vmax)
     ax1.set_title(f"Reference: {label}", fontsize=12)
-    plt.colorbar(pc1, ax=ax1, fraction=0.046, pad=0.04)
+    plt.colorbar(pc1, ax=ax1, fraction=0.046, pad=0.04, orientation="horizontal")
 
-    add_land(ax2)
-    pc2 = ax2.pcolormesh(lon_edges, lat_edges, nemo_grid,
-                         cmap=cmap, vmin=vmin, vmax=vmax,
-                         shading="flat", rasterized=True, zorder=2)
+    pc2 = plot_on_robinson(ax2, nemo_grid, cmap, vmin, vmax)
     ax2.set_title(f"NEMO-PISCES: {label}", fontsize=12)
-    plt.colorbar(pc2, ax=ax2, fraction=0.046, pad=0.04)
+    plt.colorbar(pc2, ax=ax2, fraction=0.046, pad=0.04, orientation="horizontal")
 
     plt.tight_layout()
     plt.savefig(f"{BASE_DIR}/compare_{var}.png", dpi=150, bbox_inches="tight")
