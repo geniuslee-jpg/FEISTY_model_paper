@@ -100,15 +100,15 @@ def plot_on_mollweide(ax, grid, cmap, vmin, vmax):
     return pc
 
 # =============================================================
-# 비교 변수 설정 (log10 스케일 사용)
+# 비교 변수 설정 (log10 스케일, 고정 컬러바 범위)
 # =============================================================
 variables = [
-    ("totB_smpel",    "Small pelagic [g/m\u00b2]",     "YlOrRd"),
-    ("totB_mesopel",  "Mesopelagic [g/m\u00b2]",       "YlOrRd"),
-    ("totB_largepel", "Large pelagic [g/m\u00b2]",     "YlOrRd"),
-    ("totB_midwpred", "Midwater predator [g/m\u00b2]", "YlOrRd"),
-    ("totB_dem",      "Demersal [g/m\u00b2]",          "YlOrRd"),
-    ("totB",          "Total biomass [g/m\u00b2]",     "viridis"),
+    ("totB_smpel",    "Small pelagic [g/m\u00b2]",     "YlOrRd", -3, 2),
+    ("totB_mesopel",  "Mesopelagic [g/m\u00b2]",       "YlOrRd", -3, 2),
+    ("totB_largepel", "Large pelagic [g/m\u00b2]",     "YlOrRd", -3, 2),
+    ("totB_midwpred", "Midwater predator [g/m\u00b2]", "YlOrRd", -3, 2),
+    ("totB_dem",      "Demersal [g/m\u00b2]",          "YlOrRd", -3, 2),
+    ("totB",          "Total biomass [g/m\u00b2]",     "viridis", -2, 2),
 ]
 
 nvar = len(variables)
@@ -120,19 +120,17 @@ print("\n[1] Side-by-side map (Mollweide, log10 scale)...")
 fig, axes = plt.subplots(nvar, 2, figsize=(18, 4.5 * nvar),
                          subplot_kw={"projection": PROJ})
 
-for i, (var, label, cmap) in enumerate(variables):
+for i, (var, label, cmap, vmin_fix, vmax_fix) in enumerate(variables):
     ref_grid  = np.log10(np.maximum(ref_to_grid(df_ref, var), 1e-4))
     nemo_grid = np.log10(np.maximum(nemo_to_grid(df_nemo, var), 1e-4))
 
-    ref_finite  = ref_grid[np.isfinite(ref_grid)]
-    nemo_finite = nemo_grid[np.isfinite(nemo_grid)]
-    all_finite  = np.concatenate([ref_finite, nemo_finite])
-    vmin, vmax  = np.nanpercentile(all_finite, [2, 98])
+    vmin, vmax = vmin_fix, vmax_fix
 
     # Reference
     ax = axes[i, 0]
     pc = plot_on_mollweide(ax, ref_grid, cmap, vmin, vmax)
     ax.set_title(f"Reference: {label}", fontsize=10)
+    ref_finite = ref_grid[np.isfinite(ref_grid)]
     ax.text(0.02, 0.02,
             f"mean={np.nanmean(ref_finite):.2f}, "
             f"min={np.nanmin(ref_finite):.2f}, max={np.nanmax(ref_finite):.2f}",
@@ -145,6 +143,7 @@ for i, (var, label, cmap) in enumerate(variables):
     ax = axes[i, 1]
     pc = plot_on_mollweide(ax, nemo_grid, cmap, vmin, vmax)
     ax.set_title(f"NEMO-PISCES: {label}", fontsize=10)
+    nemo_finite = nemo_grid[np.isfinite(nemo_grid)]
     ax.text(0.02, 0.02,
             f"mean={np.nanmean(nemo_finite):.2f}, "
             f"min={np.nanmin(nemo_finite):.2f}, max={np.nanmax(nemo_finite):.2f}",
@@ -166,7 +165,7 @@ print(f"  저장: {path1}")
 print("\n[2] Histogram...")
 fig, axes = plt.subplots(2, 3, figsize=(18, 9))
 
-for ax, (var, label, _) in zip(axes.ravel(), variables):
+for ax, (var, label, *_) in zip(axes.ravel(), variables):
     rv = df_ref[var].dropna().values
     nv = df_nemo[var].dropna().values
     rv = np.log10(rv[rv > 0])
@@ -193,30 +192,46 @@ plt.close()
 print(f"  저장: {path2}")
 
 # =============================================================
-# [3] 변수별 개별 맵 (Mollweide 투영, log10 스케일)
+# [3] 변수별 개별 맵 + Bias (Mollweide 투영, log10 스케일)
 # =============================================================
-print("\n[3] 변수별 개별 맵...")
-for var, label, cmap in variables:
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 5),
-                                    subplot_kw={"projection": PROJ})
+print("\n[3] 변수별 개별 맵 + Bias...")
+for var, label, cmap, vmin_fix, vmax_fix in variables:
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(24, 5),
+                                         subplot_kw={"projection": PROJ})
 
     ref_grid  = np.log10(np.maximum(ref_to_grid(df_ref, var), 1e-4))
     nemo_grid = np.log10(np.maximum(nemo_to_grid(df_nemo, var), 1e-4))
 
-    ref_f  = ref_grid[np.isfinite(ref_grid)]
-    nemo_f = nemo_grid[np.isfinite(nemo_grid)]
-    all_f  = np.concatenate([ref_f, nemo_f])
-    vmin, vmax = np.nanpercentile(all_f, [2, 98])
+    vmin, vmax = vmin_fix, vmax_fix
 
+    # Reference
     pc1 = plot_on_mollweide(ax1, ref_grid, cmap, vmin, vmax)
     ax1.set_title(f"Reference: {label}", fontsize=12)
     cb1 = plt.colorbar(pc1, ax=ax1, fraction=0.046, pad=0.04, orientation="horizontal")
     cb1.set_label("log10(g/m\u00b2)", fontsize=8)
 
+    # NEMO
     pc2 = plot_on_mollweide(ax2, nemo_grid, cmap, vmin, vmax)
     ax2.set_title(f"NEMO-PISCES: {label}", fontsize=12)
     cb2 = plt.colorbar(pc2, ax=ax2, fraction=0.046, pad=0.04, orientation="horizontal")
     cb2.set_label("log10(g/m\u00b2)", fontsize=8)
+
+    # Bias (NEMO - Reference)
+    bias_grid = nemo_grid - ref_grid
+    mask = np.isfinite(ref_grid) & np.isfinite(nemo_grid)
+    bias_grid[~mask] = np.nan
+    bias_f = bias_grid[np.isfinite(bias_grid)]
+    blim = np.nanpercentile(np.abs(bias_f), 98)
+
+    pc3 = plot_on_mollweide(ax3, bias_grid, "RdBu_r", -blim, blim)
+    ax3.set_title(f"Bias (NEMO - Ref): {label}", fontsize=12)
+    ax3.text(0.02, 0.02,
+             f"mean={np.nanmean(bias_f):.2f}, "
+             f"std={np.nanstd(bias_f):.2f}",
+             transform=ax3.transAxes, fontsize=7, va="bottom",
+             bbox=dict(boxstyle="round", facecolor="white", alpha=0.8), zorder=5)
+    cb3 = plt.colorbar(pc3, ax=ax3, fraction=0.046, pad=0.04, orientation="horizontal")
+    cb3.set_label("\u0394 log10(g/m\u00b2)", fontsize=8)
 
     plt.tight_layout()
     plt.savefig(f"{out_dir}/compare_output_{var}.png", dpi=150, bbox_inches="tight")
@@ -269,7 +284,7 @@ print(f"\n{'='*130}")
 print(f"{'변수':>15s} | {'Ref mean':>10s} {'Ref std':>10s} {'Ref min':>10s} {'Ref max':>10s} | "
       f"{'NEMO mean':>10s} {'NEMO std':>10s} {'NEMO min':>10s} {'NEMO max':>10s} | {'ratio':>6s}")
 print("-" * 130)
-for var, label, _ in variables:
+for var, label, *_ in variables:
     r = df_ref[var].dropna()
     n = df_nemo[var].dropna()
     ratio = n.mean() / r.mean() if r.mean() != 0 else float("inf")
