@@ -104,7 +104,8 @@ variables = [
 
 # ---- 그림 그리기: 2행 x 3열 ----
 print("Plotting...")
-fig, axes = plt.subplots(2, 3, figsize=(24, 10), subplot_kw={"projection": PROJ})
+fig, axes = plt.subplots(2, 3, figsize=(24, 14), subplot_kw={"projection": PROJ})
+fig.subplots_adjust(hspace=0.45)
 
 for i, (var, label, cmap) in enumerate(variables):
     print(f"  {var}...")
@@ -116,10 +117,9 @@ for i, (var, label, cmap) in enumerate(variables):
         cp = np.log10(np.maximum(cg, 1e-4))
         ep = np.log10(np.maximum(eg, 1e-4))
 
-    # 공통 색상 범위
-    all_vals = np.concatenate([cp[np.isfinite(cp)], ep[np.isfinite(ep)]])
-    vmin = np.nanpercentile(all_vals, 2)
-    vmax = np.nanpercentile(all_vals, 98)
+    # 공통 색상 범위: -2 ~ 2 고정
+    vmin = -2
+    vmax = 2
     unit = "log$_{10}$(g WW m$^{-2}$ yr$^{-1}$)"
 
     # (i, 0) COBALT
@@ -142,8 +142,7 @@ for i, (var, label, cmap) in enumerate(variables):
     mask = np.isfinite(cp) & np.isfinite(ep)
     bias[~mask] = np.nan
     bf = bias[np.isfinite(bias)]
-    blim = max(np.nanpercentile(np.abs(bf), 98), 0.01) if len(bf) > 0 else 1.0
-    pc = plot_map(ax, bias, "RdBu_r", -blim, blim)
+    pc = plot_map(ax, bias, "RdBu_r", -2, 2)
     ax.set_title(f"EXP02 $-$ COBALT: {label}", fontsize=11, fontweight="bold")
     if len(bf) > 0:
         ax.text(0.02, 0.02,
